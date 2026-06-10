@@ -115,7 +115,7 @@ python scripts/validate.py \
     --gym results/tournament/leaderboard.json --truth mteb
 ```
 
-Reports Spearman ρ + Kendall τ with bootstrap CI. Target: match Rohan's ρ ≈ 0.86 from real Arena queries.
+Reports Spearman ρ + Kendall τ with bootstrap CI. 
 
 ## Custom corpus
 

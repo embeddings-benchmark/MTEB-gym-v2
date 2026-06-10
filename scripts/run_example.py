@@ -22,7 +22,10 @@ def build_judge(args):
     if args.mock:
         return MockClient()
     if args.judge == "qwen3":
-        return OpenAICompatClient(model=args.model, base_url=args.base_url, api_key="EMPTY")
+        return OpenAICompatClient(
+            model=args.model or "Qwen/Qwen3-4B-Instruct-2507",
+            base_url=args.base_url, api_key="EMPTY",
+        )
     return AnthropicClient(model=args.model or "claude-haiku-4-5-20251001")
 
 

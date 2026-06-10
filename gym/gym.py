@@ -30,6 +30,26 @@ from .scoring import format_leaderboard, rate
 logger = logging.getLogger(__name__)
 
 
+_MODEL_FAMILIES = {
+    "claude": ("claude", "haiku", "sonnet", "opus"),
+    "gpt": ("gpt-", "o1", "o3", "o4"),
+    "qwen": ("qwen",),
+    "gemini": ("gemini", "gemma"),
+    "llama": ("llama",),
+    "mistral": ("mistral", "mixtral"),
+    "deepseek": ("deepseek",),
+}
+
+
+def _model_family(client) -> str | None:
+    """Best-effort family of the model behind a client, None if unknown."""
+    mid = str(getattr(client, "model", "")).lower()
+    for family, markers in _MODEL_FAMILIES.items():
+        if any(m in mid for m in markers):
+            return family
+    return None
+
+
 def _a_first_rate_from(verdicts: list[Verdict]) -> float | None:
     """Position-bias diagnostic recomputed from persisted per-order winners.
 
@@ -60,6 +80,18 @@ class Gym:
                            note=cfg.judge_batch_note, workers=cfg.judge_workers)
         self._retr_cache: dict[str, list] = {}
         self.leaderboard_str = ""
+
+        # Self-preference bias tracks the judge's own perplexity over the text
+        # it rates (Wataoka et al. 2024), so LLM-generated queries should not
+        # be judged by the same model family that wrote them.
+        gen_fam, judge_fam = _model_family(self.gen_client), _model_family(judge_client)
+        if gen_fam and gen_fam == judge_fam:
+            logger.warning(
+                "query generator and judge are both '%s' family; self-preference "
+                "bias can favor models that retrieve generator-flavored text. "
+                "Pass a gen_client from a different family for clean validation.",
+                gen_fam,
+            )
 
     # --------------------------------------------------------------- corpus
     def load_corpus(self) -> dict[str, str]:

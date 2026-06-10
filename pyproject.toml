@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mteb-gym"
+version = "0.2.0"
+description = "Offline, LLM-judged arena for embedding models (AlpacaEval-style)"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "scipy",
+]
+
+[project.optional-dependencies]
+# retrieval models + MTEB corpora
+retrieval = ["sentence-transformers>=2.7", "mteb>=1.39", "torch"]
+# judge backends
+claude = ["anthropic>=0.40"]
+openai = ["openai>=1.40"]   # also covers vLLM / Together / local Qwen3 servers
+hf = ["huggingface_hub>=0.24"]
+# everything
+full = [
+    "sentence-transformers>=2.7", "mteb>=1.39", "torch",
+    "anthropic>=0.40", "openai>=1.40", "huggingface_hub>=0.24",
+]
+
+[tool.setuptools]
+packages = ["gym"]

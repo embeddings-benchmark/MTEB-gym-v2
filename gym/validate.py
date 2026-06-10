@@ -23,6 +23,33 @@ def _load_gym(path: str) -> dict[str, float]:
     return {m["name"]: m["rating"] for m in data["models"]}
 
 
+def _exact_permutation_p(g: np.ndarray, t: np.ndarray, max_n: int = 8) -> float | None:
+    """Two-tailed exact permutation p-value for Spearman rho.
+
+    With few models the asymptotic p from scipy is an approximation; here the
+    permutation distribution is small enough to enumerate exactly (n=7 ->
+    5040 permutations). Returns None for n > max_n.
+    """
+    from itertools import permutations
+
+    from scipy.stats import spearmanr
+
+    n = len(g)
+    if n > max_n:
+        return None
+    rho_obs, _ = spearmanr(g, t)
+    if np.isnan(rho_obs):
+        return None
+    hits = 0
+    total = 0
+    for perm in permutations(range(n)):
+        r, _ = spearmanr(g, t[list(perm)])
+        if abs(r) >= abs(rho_obs) - 1e-12:
+            hits += 1
+        total += 1
+    return hits / total
+
+
 def correlate(gym_ratings: dict[str, float],
               ground_truth: dict[str, float],
               bootstrap: int = 1000, seed: int = 0) -> dict:
@@ -38,6 +65,7 @@ def correlate(gym_ratings: dict[str, float],
 
     rho, p_rho = spearmanr(g, t)
     tau, p_tau = kendalltau(g, t)
+    p_exact = _exact_permutation_p(g, t)
 
     # bootstrap CI on rho by resampling models
     rng = np.random.default_rng(seed)
@@ -55,6 +83,7 @@ def correlate(gym_ratings: dict[str, float],
         "n_models": len(shared),
         "models": shared,
         "spearman_rho": float(rho), "spearman_p": float(p_rho),
+        "spearman_p_exact": p_exact,  # exact permutation p, None if n > 8
         "kendall_tau": float(tau), "kendall_p": float(p_tau),
         "spearman_ci95": ci,
         "gym_ranking": [m for m, _ in sorted(gym_ratings.items(), key=lambda x: -x[1]) if m in shared],

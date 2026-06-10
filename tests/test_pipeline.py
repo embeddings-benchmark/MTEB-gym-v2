@@ -114,6 +114,16 @@ def test_correlation(ratings):
     print(f"  correlation ok (rho={res['spearman_rho']:.2f})")
 
 
+def test_exact_permutation_p():
+    # identical rankings over 5 models -> p = 2/5! exactly (only the identity
+    # and the full reversal reach |rho| = 1)
+    g = {f"m{i}": float(i) for i in range(5)}
+    res = correlate(g, dict(g), bootstrap=50)
+    assert res["spearman_p_exact"] is not None
+    assert abs(res["spearman_p_exact"] - 2 / 120) < 1e-9, res["spearman_p_exact"]
+    print(f"  exact permutation p ok (p={res['spearman_p_exact']:.4f})")
+
+
 def test_ensemble_vote():
     assert EnsembleClient.vote(["A", "A", "B"]) [0] == "A"
     assert EnsembleClient.vote(["A", "B"]) [0] == "tie"
@@ -129,4 +139,5 @@ if __name__ == "__main__":
     test_ensemble_vote()
     ratings = test_judge_and_scoring()
     test_correlation(ratings)
+    test_exact_permutation_p()
     print("\nAll smoke tests passed.")

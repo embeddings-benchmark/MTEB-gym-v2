@@ -39,18 +39,36 @@ class Gym:
 
     # --------------------------------------------------------------- corpus
     def load_corpus(self) -> dict[str, str]:
-        """Load an MTEB task corpus as {doc_id: 'title text'}."""
+        """Load an MTEB task corpus as {doc_id: 'title text'}.
+
+        Handles both mteb 1.x (task.corpus[split] dict) and mteb 2.x, where
+        load_data() populates task.dataset[subset][split]["corpus"] as a HF
+        Dataset with id/title/text columns and task.corpus no longer exists.
+        """
         import mteb
         task = mteb.get_tasks(tasks=[self.cfg.task_name])[0]
         task.load_data()
-        corpus = task.corpus.get(self.cfg.corpus_split) or next(iter(task.corpus.values()))
-        out: dict[str, str] = {}
-        for did, doc in corpus.items():
-            if isinstance(doc, dict):                      # {title, text}
-                out[did] = (doc.get("title", "") + " " + doc.get("text", "")).strip()
-            else:                                          # plain string
-                out[did] = str(doc).strip()
-        return out
+
+        legacy = getattr(task, "corpus", None)
+        if legacy:                                         # mteb 1.x
+            corpus = legacy.get(self.cfg.corpus_split) or legacy[next(iter(legacy))]
+            out: dict[str, str] = {}
+            for did, doc in corpus.items():
+                if isinstance(doc, dict):                  # {title, text}
+                    out[did] = (doc.get("title", "") + " " + doc.get("text", "")).strip()
+                else:                                      # plain string
+                    out[did] = str(doc).strip()
+            return out
+
+        # mteb 2.x
+        subsets = task.dataset
+        subset = subsets.get("default") or subsets[next(iter(subsets))]
+        split_data = subset.get(self.cfg.corpus_split) or subset[next(iter(subset))]
+        corpus_ds = split_data["corpus"]
+        return {
+            row["id"]: ((row.get("title") or "") + " " + (row.get("text") or "")).strip()
+            for row in corpus_ds
+        }
 
     # --------------------------------------------------------------- queries
     def _queries_path(self) -> Path:

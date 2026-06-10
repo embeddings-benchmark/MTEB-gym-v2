@@ -22,6 +22,7 @@ Two things every previous version got wrong, and why they mattered:
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 
@@ -45,6 +46,14 @@ class PromptTemplate:
 # Pattern -> template. First regex match wins. Patterns are matched against the
 # lowercased model id, so "intfloat/multilingual-e5-small" hits the e5 rule.
 _REGISTRY: list[tuple[str, PromptTemplate]] = [
+    # --- e5 instruct family (instruction on queries, BARE passages) ---
+    # mteb encodes these with "Instruct: {task}\nQuery: " and
+    # apply_instruction_to_passages=False; query:/passage: is wrong for them.
+    # Stopgap until the mteb model wrapper lands and prompts come from ModelMeta.
+    (r"e5.*instruct", PromptTemplate(
+        query="Instruct: Given a web search query, retrieve relevant passages "
+              "that answer the query\nQuery: {text}",
+        document="{text}")),
     # --- e5 family (symmetric prefixes) ---
     (r"e5", PromptTemplate(query="query: {text}", document="passage: {text}")),
     # --- nomic ---
@@ -74,6 +83,11 @@ def resolve_template(model_name: str) -> PromptTemplate:
     for pattern, template in _REGISTRY:
         if re.search(pattern, name):
             return template
+    logging.getLogger(__name__).warning(
+        "No prompt template rule for %s; encoding without prefixes. "
+        "If this model is asymmetric, add a rule to gym.encoders._REGISTRY.",
+        model_name,
+    )
     return _DEFAULT
 
 
@@ -101,7 +115,11 @@ class Encoder:
     def _ensure_model(self):
         if self._model is None:
             from sentence_transformers import SentenceTransformer
-            self._model = SentenceTransformer(self.model_name, device=self._device)
+            # trust_remote_code: nomic / gte-Qwen / jina ship custom modeling
+            # code and fail to load without it (mteb passes it for these too).
+            self._model = SentenceTransformer(
+                self.model_name, device=self._device, trust_remote_code=True
+            )
         return self._model
 
     def _encode(self, texts: list[str]) -> np.ndarray:

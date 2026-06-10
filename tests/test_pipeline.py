@@ -42,6 +42,11 @@ def test_prefixes():
     assert resolve_template("BAAI/bge-large-en-v1.5").query.startswith("Represent")
     assert resolve_template("sentence-transformers/all-MiniLM-L6-v2").query == "{text}"
     assert cache_key("intfloat/multilingual-e5-small") == "intfloat_multilingual-e5-small"
+    # instruct-e5 must NOT fall through to the symmetric query:/passage: rule
+    instruct = resolve_template("intfloat/multilingual-e5-large-instruct")
+    assert instruct.query.startswith("Instruct:")
+    assert instruct.document == "{text}"
+    assert resolve_template("intfloat/e5-mistral-7b-instruct").query.startswith("Instruct:")
     print("  prefix registry + cache key ok")
 
 

@@ -1,7 +1,6 @@
 # MTEB Gym 
 
-Offline, LLM-judged arena for embedding models. Generate synthetic queries from any corpus, have two models retrieve, let an LLM judge which result set is better, and rank models by ELO — no human labels, no live Arena traffic. AlpacaEval, but for retrieval.
-
+Offline, LLM-judged arena for embedding models. Generate synthetic queries from any corpus, have two models retrieve, let an LLM judge which result set is better, and rank models.
 ```
 corpus → synthetic queries (LLM) → filter (heuristic + LLM + dedup)
                                           │

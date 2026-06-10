@@ -119,16 +119,38 @@ class QueryGenerator:
         return True
 
     def _llm_quality(self, queries: list[Query]) -> None:
-        for q in queries:
+        failures = 0
+
+        def _score(q: Query) -> None:
+            nonlocal failures
             msg = [
                 {"role": "system", "content": _FILTER_SYSTEM},
                 {"role": "user", "content": f"Query: {q.text}\nReply as JSON."},
             ]
             try:
                 out = _extract_json(self.client.chat(msg, temperature=0.0))
+                if "score" not in out:
+                    failures += 1
                 q.quality = int(out.get("score", 3))
             except Exception:  # noqa: BLE001
+                failures += 1
                 q.quality = 3   # neutral on failure rather than dropping signal
+
+        workers = max(1, getattr(self.cfg, "judge_workers", 1))
+        if workers <= 1 or len(queries) <= 1:
+            for q in queries:
+                _score(q)
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                list(pool.map(_score, queries))
+        if failures:
+            import logging
+            logging.getLogger(__name__).warning(
+                "quality filter: %d/%d scores defaulted to 3 (parse/call failure); "
+                "a misbehaving filter model can silently disable filtering",
+                failures, len(queries),
+            )
 
     def _dedup(self, queries: list[Query]) -> list[Query]:
         """Drop near-duplicate queries. Uses a tiny encoder if available; else skips."""

@@ -30,6 +30,8 @@ class GymConfig:
     # --- judging ---
     flip_positions: bool = True   # run A/B and B/A to measure & cancel position bias
     judge_batch_note: str = ""    # free-form tag stored in verdicts
+    judge_workers: int = 8        # concurrent judge/filter calls; clients are
+                                  # thread-safe and vLLM throughput needs batching
 
     # --- scoring ---
     method: str = "bradley_terry" # "bradley_terry" | "elo"

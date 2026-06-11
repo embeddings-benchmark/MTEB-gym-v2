@@ -175,13 +175,20 @@ class Judge:
             reasoning=" | ".join(r for r in reasonings if r), note=self.note,
         )
 
-    def judge_all(self, retr_a: list, retr_b: list, model_a: str, model_b: str) -> list[Verdict]:
+    def judge_all(self, retr_a: list, retr_b: list, model_a: str, model_b: str,
+                  on_verdict=None) -> list[Verdict]:
+        """Judge every shared query. `on_verdict`, if given, is called once per
+        verdict as it completes (from any worker thread), letting the caller
+        persist incrementally; the callback does its own locking."""
         by_qid = {r.qid: r for r in retr_b}
         pairs = [(ra, by_qid[ra.qid]) for ra in retr_a if ra.qid in by_qid]
 
         def _one(pair):
             ra, rb = pair
-            return self.judge_pair(ra, rb, model_a, model_b)
+            v = self.judge_pair(ra, rb, model_a, model_b)
+            if on_verdict is not None:
+                on_verdict(v)
+            return v
 
         if self.workers <= 1 or len(pairs) <= 1:
             verdicts = []

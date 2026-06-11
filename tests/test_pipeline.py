@@ -223,6 +223,59 @@ def test_winless_model_ranks_last():
     print("  winless-model + cluster bootstrap ok")
 
 
+def test_corpus_fingerprint_content_sensitive():
+    from gym.retrieval_harness import _corpus_fingerprint
+
+    base = _corpus_fingerprint({"D0": "alpha", "D1": "beta"})
+    assert _corpus_fingerprint({"D0": "alpha", "D1": "beta"}) == base, "deterministic"
+    assert _corpus_fingerprint({"D0": "alpha", "D1": "CHANGED"}) != base, \
+        "a doc text change must invalidate the cache (length+ids were not enough)"
+    assert _corpus_fingerprint({"D0": "alpha", "D9": "beta"}) != base, \
+        "a doc id change must invalidate the cache"
+    print("  corpus fingerprint content sensitivity ok")
+
+
+def test_matchup_resume_from_jsonl(tmp_dir="results/_test_resume"):
+    import shutil
+    from gym.gym import Gym
+
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    calls = {"n": 0}
+
+    class CountingClient(MockClient):
+        def chat(self, messages, temperature=0.0):
+            calls["n"] += 1
+            return super().chat(messages, temperature)
+
+    queries = [Query(f"q{i}", f"query {i} about statins", ["D0"]) for i in range(6)]
+    ra, rb = _fake_retrievals("a", queries), _fake_retrievals("b", queries)
+
+    cfg = GymConfig(output_dir=tmp_dir, judge_workers=1)
+    g = Gym(cfg, judge_client=CountingClient(seed=1))
+    g._retr_cache = {"m_a": ra, "m_b": rb}
+    full = g.matchup("m_a", "m_b", {}, queries)
+    assert len(full) == 6
+    first_run_calls = calls["n"]
+
+    # Simulate a crash mid-pair: drop the finalized file, truncate the JSONL to
+    # two verdicts, rerun. Only the four missing queries may hit the client.
+    final = g._matchup_path("m_a", "m_b", queries)
+    jsonl = final.with_suffix(".jsonl")
+    jsonl.write_text("\n".join(jsonl.read_text().splitlines()[:2]) + "\n")
+    final.unlink()
+
+    calls["n"] = 0
+    g2 = Gym(cfg, judge_client=CountingClient(seed=1))
+    g2._retr_cache = {"m_a": ra, "m_b": rb}
+    resumed = g2.matchup("m_a", "m_b", {}, queries)
+    assert len(resumed) == 6
+    assert [v.qid for v in resumed] == [q.qid for q in queries]
+    assert calls["n"] == first_run_calls * 4 // 6, \
+        f"resume must only judge the 4 missing queries, made {calls['n']} calls"
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    print("  matchup JSONL resume ok (resume judged only the missing queries)")
+
+
 if __name__ == "__main__":
     print("Running MTEB Gym smoke tests...\n")
     test_json_extraction()
@@ -239,4 +292,6 @@ if __name__ == "__main__":
     test_identical_results_short_circuit()
     test_parse_failure_counter()
     test_winless_model_ranks_last()
+    test_corpus_fingerprint_content_sensitive()
+    test_matchup_resume_from_jsonl()
     print("\nAll smoke tests passed.")

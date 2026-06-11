@@ -15,6 +15,7 @@ import hashlib
 import itertools
 import json
 import logging
+import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -134,7 +135,8 @@ class Gym:
         into the same output dir silently reuses the old query file.
         """
         c = self.cfg
-        key = (f"{c.task_name}|{c.n_queries}|{c.seed}|{c.docs_per_query}|"
+        gen_id = getattr(self.gen_client, "model", type(self.gen_client).__name__)
+        key = (f"{gen_id}|{c.task_name}|{c.n_queries}|{c.seed}|{c.docs_per_query}|"
                f"{c.gen_overshoot}|{c.filter_queries}|{c.filter_min_score}|"
                f"{c.dedup_threshold}|{c.min_query_chars}|{c.max_query_chars}")
         return hashlib.sha256(key.encode()).hexdigest()[:8]
@@ -171,13 +173,15 @@ class Gym:
     def _verdict_config_hash(self, queries) -> str:
         """Cache key over everything that changes verdicts for a model pair.
 
-        Judge model, top_k, position flipping, and the query set itself. This
-        is what stops a --judge qwen3 rerun from silently reusing Claude
-        verdicts out of the same output dir.
+        Judge model, judge prompt, top_k, position flipping, and the query set
+        itself. This is what stops a --judge qwen3 rerun (or a judge-prompt
+        edit) from silently reusing stale verdicts out of the same output dir.
         """
+        from .judge import _JUDGE_SYSTEM
         judge_id = getattr(self.judge_client, "model", type(self.judge_client).__name__)
+        prompt_sig = hashlib.sha256(_JUDGE_SYSTEM.encode()).hexdigest()[:8]
         qsig = "||".join(f"{q.qid}:{q.text}" for q in queries)
-        key = f"{judge_id}|{self.cfg.top_k}|{self.cfg.flip_positions}|{qsig}"
+        key = f"{judge_id}|{prompt_sig}|{self.cfg.top_k}|{self.cfg.flip_positions}|{qsig}"
         return hashlib.sha256(key.encode()).hexdigest()[:8]
 
     def _matchup_path(self, a, b, queries) -> Path:
@@ -192,10 +196,41 @@ class Gym:
             data = json.loads(path.read_text())
             logger.info("%s vs %s: %d cached verdicts", model_a, model_b, len(data))
             return [Verdict(**v) for v in data]
+
+        # Verdicts stream to a JSONL sidecar as they complete, so a crash or
+        # preemption mid-pair costs only the in-flight queries, not the whole
+        # pair (~2x n_queries judge calls). On restart we resume from it.
+        jsonl = path.with_suffix(".jsonl")
+        done: dict[str, Verdict] = {}
+        if jsonl.exists():
+            for line in jsonl.read_text().splitlines():
+                if line.strip():
+                    v = Verdict(**json.loads(line))
+                    done[v.qid] = v
+            if done:
+                logger.info("%s vs %s: resuming, %d verdicts already on disk",
+                            model_a, model_b, len(done))
+
         t0 = time.time()
         ra = self._retrieve(model_a, corpus, queries)
         rb = self._retrieve(model_b, corpus, queries)
-        verdicts = self.judge.judge_all(ra, rb, model_a, model_b)
+        todo = [r for r in ra if r.qid not in done]
+        if todo:
+            write_lock = threading.Lock()
+
+            def _persist(v: Verdict) -> None:
+                with write_lock:
+                    with jsonl.open("a", encoding="utf-8") as f:
+                        f.write(json.dumps(asdict(v)) + "\n")
+
+            new = self.judge.judge_all(todo, rb, model_a, model_b,
+                                       on_verdict=_persist)
+            done.update({v.qid: v for v in new})
+
+        # Finalize in query order for deterministic files; the JSONL stays as
+        # the raw artifact.
+        order = {q.qid: i for i, q in enumerate(queries)}
+        verdicts = sorted(done.values(), key=lambda v: order.get(v.qid, 1 << 30))
         path.write_text(json.dumps([asdict(v) for v in verdicts], indent=2))
         logger.info("%s vs %s: %d verdicts in %.0fs", model_a, model_b,
                     len(verdicts), time.time() - t0)

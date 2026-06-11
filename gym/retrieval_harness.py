@@ -28,10 +28,21 @@ class Retrieved:
 
 
 def _corpus_fingerprint(corpus: dict[str, str]) -> str:
+    """Content hash over every doc id and text.
+
+    The previous version hashed only the corpus length and the first 50 ids,
+    so a corpus revision or a change to how title+text is assembled would
+    silently reuse stale embeddings (the failure class behind v0.1's e5/MiniLM
+    inversion). Matching hashes also imply matching iteration order, so the
+    cached matrix rows stay aligned with the live corpus dict. Prompt-variant
+    isolation is handled separately by the encoder's cache_name.
+    """
     h = hashlib.sha256()
-    h.update(str(len(corpus)).encode())
-    for did in list(corpus)[:50]:           # cheap, stable sample
+    for did, text in corpus.items():
         h.update(did.encode())
+        h.update(b"\x00")
+        h.update(text.encode())
+        h.update(b"\x01")
     return h.hexdigest()[:12]
 
 

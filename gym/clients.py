@@ -122,11 +122,15 @@ class OpenAICompatClient:
 
     def __init__(self, model: str, base_url: str | None = None,
                  api_key: str | None = None, max_tokens: int = 512,
-                 max_retries: int = 4, extra_body: dict | None = None):
+                 max_retries: int = 4, extra_body: dict | None = None,
+                 timeout: float = 120.0):
         from openai import OpenAI
+        # timeout matters under the thread pool: one hung HTTP call would
+        # otherwise stall a worker forever with no error.
         self.client = OpenAI(
             base_url=base_url,
             api_key=api_key or os.environ.get("OPENAI_API_KEY", "EMPTY"),
+            timeout=timeout,
         )
         self.model = model
         self.max_tokens = max_tokens

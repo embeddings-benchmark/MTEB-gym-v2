@@ -130,6 +130,52 @@ def test_ensemble_vote():
     print("  ensemble vote ok")
 
 
+def _fake_retrievals(seed, queries, k=5):
+    return [Retrieved(q.qid, q.text, [f"D{seed}{j}" for j in range(k)],
+                      [f"result {seed}-{q.qid}-{j}" for j in range(k)])
+            for q in queries]
+
+
+def test_parallel_judging_matches_sequential():
+    queries = [Query(f"q{i}", f"query {i} about statins", ["D0"]) for i in range(30)]
+    ra, rb = _fake_retrievals("a", queries), _fake_retrievals("b", queries)
+
+    seq = Judge(MockClient(seed=1), workers=1).judge_all(ra, rb, "m_a", "m_b")
+    par = Judge(MockClient(seed=1), workers=8).judge_all(ra, rb, "m_a", "m_b")
+
+    assert [v.qid for v in par] == [v.qid for v in seq]
+    assert [v.score_a for v in par] == [v.score_a for v in seq]
+    print(f"  parallel judging deterministic ok ({len(par)} verdicts)")
+
+
+def test_identical_results_short_circuit():
+    class ExplodingClient:
+        def chat(self, messages, temperature=0.0):
+            raise AssertionError("judge must not be called for identical result sets")
+
+    queries = [Query("q0", "some query", ["D0"])]
+    ra = _fake_retrievals("same", queries)
+    rb = _fake_retrievals("same", queries)
+    verdicts = Judge(ExplodingClient()).judge_all(ra, rb, "m_a", "m_b")
+    assert verdicts[0].score_a == 0.5
+    assert verdicts[0].raw == ["identical"]
+    print("  identical-results short-circuit ok")
+
+
+def test_parse_failure_counter():
+    class GarbageClient:
+        def chat(self, messages, temperature=0.0):
+            return "I refuse to answer in the requested format."
+
+    queries = [Query(f"q{i}", f"query {i}", ["D0"]) for i in range(5)]
+    ra, rb = _fake_retrievals("a", queries), _fake_retrievals("b", queries)
+    judge = Judge(GarbageClient())
+    verdicts = judge.judge_all(ra, rb, "m_a", "m_b")
+    assert all(v.score_a == 0.5 for v in verdicts)
+    assert judge.parse_failure_rate == 1.0
+    print("  parse-failure counter ok (rate=1.0 on garbage judge)")
+
+
 if __name__ == "__main__":
     print("Running MTEB Gym smoke tests...\n")
     test_json_extraction()
@@ -140,4 +186,7 @@ if __name__ == "__main__":
     ratings = test_judge_and_scoring()
     test_correlation(ratings)
     test_exact_permutation_p()
+    test_parallel_judging_matches_sequential()
+    test_identical_results_short_circuit()
+    test_parse_failure_counter()
     print("\nAll smoke tests passed.")

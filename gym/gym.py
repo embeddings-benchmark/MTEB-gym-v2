@@ -11,8 +11,11 @@ stage so a crash (or your laptop lid) never costs more than the current step.
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
+import logging
+import time
 from dataclasses import asdict
 from pathlib import Path
 
@@ -24,6 +27,47 @@ from .query_generator import Query, QueryGenerator
 from .retrieval_harness import RetrievalHarness
 from .scoring import format_leaderboard, rate
 
+logger = logging.getLogger(__name__)
+
+
+_MODEL_FAMILIES = {
+    "claude": ("claude", "haiku", "sonnet", "opus"),
+    "gpt": ("gpt-", "o1", "o3", "o4"),
+    "qwen": ("qwen",),
+    "gemini": ("gemini", "gemma"),
+    "llama": ("llama",),
+    "mistral": ("mistral", "mixtral"),
+    "deepseek": ("deepseek",),
+}
+
+
+def _model_family(client) -> str | None:
+    """Best-effort family of the model behind a client, None if unknown."""
+    mid = str(getattr(client, "model", "")).lower()
+    for family, markers in _MODEL_FAMILIES.items():
+        if any(m in mid for m in markers):
+            return family
+    return None
+
+
+def _a_first_rate_from(verdicts: list[Verdict]) -> float | None:
+    """Position-bias diagnostic recomputed from persisted per-order winners.
+
+    Pure function over verdict files, so cached or resumed runs report the
+    true rate instead of whatever the in-process judge counters happened to
+    see. raw[0] is the A-first order (first-shown win = "A"); raw[1] is the
+    flipped order (first-shown win = "A" there too). "identical" markers from
+    the short-circuit carry no position information and are skipped.
+    """
+    first = decisive = 0
+    for v in verdicts:
+        for w in v.raw:
+            if w in ("A", "B"):
+                decisive += 1
+                if w == "A":
+                    first += 1
+    return (first / decisive) if decisive else None
+
 
 class Gym:
     def __init__(self, cfg: GymConfig, judge_client, gen_client=None):
@@ -33,9 +77,21 @@ class Gym:
         self.gen_client = gen_client or judge_client
         self.harness = RetrievalHarness(cfg.cache_dir, top_k=cfg.top_k)
         self.judge = Judge(judge_client, flip_positions=cfg.flip_positions,
-                           note=cfg.judge_batch_note)
+                           note=cfg.judge_batch_note, workers=cfg.judge_workers)
         self._retr_cache: dict[str, list] = {}
         self.leaderboard_str = ""
+
+        # Self-preference bias tracks the judge's own perplexity over the text
+        # it rates (Wataoka et al. 2024), so LLM-generated queries should not
+        # be judged by the same model family that wrote them.
+        gen_fam, judge_fam = _model_family(self.gen_client), _model_family(judge_client)
+        if gen_fam and gen_fam == judge_fam:
+            logger.warning(
+                "query generator and judge are both '%s' family; self-preference "
+                "bias can favor models that retrieve generator-flavored text. "
+                "Pass a gen_client from a different family for clean validation.",
+                gen_fam,
+            )
 
     # --------------------------------------------------------------- corpus
     def load_corpus(self) -> dict[str, str]:
@@ -71,8 +127,21 @@ class Gym:
         }
 
     # --------------------------------------------------------------- queries
+    def _query_config_hash(self) -> str:
+        """Cache key over everything that changes which queries get generated.
+
+        Without this, rerunning with a different --n-queries or filter setting
+        into the same output dir silently reuses the old query file.
+        """
+        c = self.cfg
+        key = (f"{c.task_name}|{c.n_queries}|{c.seed}|{c.docs_per_query}|"
+               f"{c.gen_overshoot}|{c.filter_queries}|{c.filter_min_score}|"
+               f"{c.dedup_threshold}|{c.min_query_chars}|{c.max_query_chars}")
+        return hashlib.sha256(key.encode()).hexdigest()[:8]
+
     def _queries_path(self) -> Path:
-        return self.cfg.output_dir / f"queries_{self.cfg.task_name}.json"
+        return self.cfg.output_dir / (
+            f"queries_{self.cfg.task_name}_{self._query_config_hash()}.json")
 
     def get_queries(self, corpus: dict[str, str]) -> list[Query]:
         path = self._queries_path()
@@ -97,25 +166,45 @@ class Gym:
         return retr
 
     # --------------------------------------------------------------- matchup
-    def _matchup_path(self, a, b) -> Path:
+    def _verdict_config_hash(self, queries) -> str:
+        """Cache key over everything that changes verdicts for a model pair.
+
+        Judge model, top_k, position flipping, and the query set itself. This
+        is what stops a --judge qwen3 rerun from silently reusing Claude
+        verdicts out of the same output dir.
+        """
+        judge_id = getattr(self.judge_client, "model", type(self.judge_client).__name__)
+        qsig = "||".join(f"{q.qid}:{q.text}" for q in queries)
+        key = f"{judge_id}|{self.cfg.top_k}|{self.cfg.flip_positions}|{qsig}"
+        return hashlib.sha256(key.encode()).hexdigest()[:8]
+
+    def _matchup_path(self, a, b, queries) -> Path:
         from .encoders import cache_key
-        return self.cfg.output_dir / f"verdicts_{cache_key(a)}__{cache_key(b)}.json"
+        return self.cfg.output_dir / (
+            f"verdicts_{cache_key(a)}__{cache_key(b)}_"
+            f"{self._verdict_config_hash(queries)}.json")
 
     def matchup(self, model_a, model_b, corpus, queries) -> list[Verdict]:
-        path = self._matchup_path(model_a, model_b)
+        path = self._matchup_path(model_a, model_b, queries)
         if path.exists():
             data = json.loads(path.read_text())
+            logger.info("%s vs %s: %d cached verdicts", model_a, model_b, len(data))
             return [Verdict(**v) for v in data]
+        t0 = time.time()
         ra = self._retrieve(model_a, corpus, queries)
         rb = self._retrieve(model_b, corpus, queries)
         verdicts = self.judge.judge_all(ra, rb, model_a, model_b)
         path.write_text(json.dumps([asdict(v) for v in verdicts], indent=2))
+        logger.info("%s vs %s: %d verdicts in %.0fs", model_a, model_b,
+                    len(verdicts), time.time() - t0)
         return verdicts
 
     # --------------------------------------------------------------- tournament
     def tournament(self, models: list[str], corpus, queries):
+        pairs = list(itertools.combinations(models, 2))
         all_verdicts: list[Verdict] = []
-        for a, b in itertools.combinations(models, 2):
+        for i, (a, b) in enumerate(pairs, 1):
+            logger.info("pair %d/%d: %s vs %s", i, len(pairs), a, b)
             all_verdicts.extend(self.matchup(a, b, corpus, queries))
 
         ratings = rate(all_verdicts, method=self.cfg.method,
@@ -127,7 +216,10 @@ class Gym:
             "task": self.cfg.task_name,
             "n_queries": len(queries),
             "method": self.cfg.method,
-            "a_first_rate": self.judge.a_first_rate,   # position-bias diagnostic
+            # position bias recomputed from the persisted verdicts, so cached
+            # and resumed runs report the true rate
+            "a_first_rate": _a_first_rate_from(all_verdicts),
+            "parse_failure_rate": self.judge.parse_failure_rate,
             "models": [
                 {"name": m.name, "rating": m.rating, "ci_low": m.ci_low,
                  "ci_high": m.ci_high, "wins": m.wins, "losses": m.losses,

@@ -16,6 +16,7 @@ Rohan's, plus a BM25 anchor.
     PYTHONPATH=. python3 scripts/tournament.py --mock
 """
 import argparse
+import logging
 
 from gym import Gym, GymConfig
 from gym.clients import AnthropicClient, MockClient, OpenAICompatClient
@@ -52,17 +53,26 @@ def main():
     ap.add_argument("--top-k", type=int, default=10)
     ap.add_argument("--method", choices=["bradley_terry", "elo"], default="bradley_terry")
     ap.add_argument("--no-filter", action="store_true")
+    ap.add_argument("--workers", type=int, default=8,
+                    help="concurrent judge/filter calls (vLLM throughput needs this)")
     ap.add_argument("--output", default="results/tournament")
     args = ap.parse_args()
 
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s",
+                        datefmt="%H:%M:%S")
+
     cfg = GymConfig(task_name=args.task, n_queries=args.n_queries, top_k=args.top_k,
                     method=args.method, filter_queries=not args.no_filter,
-                    output_dir=args.output)
+                    judge_workers=args.workers, output_dir=args.output)
     gym = Gym(cfg, judge_client=build_judge(args))
     gym.run(args.models)
     print(gym.leaderboard_str)
     if gym.judge.a_first_rate is not None:
         print(f"\nposition bias (a_first_rate): {gym.judge.a_first_rate:.2f}")
+    if gym.judge.parse_failure_rate:
+        print(f"judge parse failures: {gym.judge.parse_failure_rate:.1%} "
+              "(these score as ties; investigate if above a few percent)")
     print(f"\nresults -> {cfg.output_dir}/leaderboard.json")
     print("next: python3 scripts/validate.py --gym "
           f"{cfg.output_dir}/leaderboard.json --truth mteb")

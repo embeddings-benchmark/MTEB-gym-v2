@@ -26,6 +26,7 @@ class GymConfig:
 
     # --- retrieval ---
     top_k: int = 10
+    use_mteb_models: bool = True  # encode with mteb ModelMeta prompts; falls back to encoders._REGISTRY
 
     # --- judging ---
     flip_positions: bool = True   # run A/B and B/A to measure & cancel position bias

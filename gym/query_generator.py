@@ -55,19 +55,24 @@ _FILTER_SYSTEM = (
 
 
 def _extract_json(text: str) -> dict:
-    """Tolerant JSON extraction — models love to add prose or fences."""
-    text = text.strip()
-    text = re.sub(r"^```(?:json)?|```$", "", text, flags=re.MULTILINE).strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        m = re.search(r"\{.*\}", text, flags=re.DOTALL)
-        if m:
-            try:
-                return json.loads(m.group(0))
-            except json.JSONDecodeError:
-                pass
-    return {}
+    """Tolerant JSON extraction — models add prose, fences, or reasoning traces.
+
+    Returns the last object found, since reasoning models answer last.
+    """
+    text = re.sub(r"```(?:json)?", "", text or "")
+    decoder = json.JSONDecoder()
+    found: dict = {}
+    i = text.find("{")
+    while i != -1:
+        try:
+            obj, end = decoder.raw_decode(text, i)
+        except json.JSONDecodeError:
+            i = text.find("{", i + 1)
+            continue
+        if isinstance(obj, dict):
+            found = obj
+        i = text.find("{", end)
+    return found
 
 
 class QueryGenerator:

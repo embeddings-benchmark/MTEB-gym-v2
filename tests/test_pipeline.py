@@ -3,6 +3,7 @@ Smoke test: full pipeline on a tiny synthetic corpus with the MockClient.
 No network, no GPU, no API key. Run: PYTHONPATH=. python3 tests/test_pipeline.py
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -11,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from gym.baselines import BM25Retriever
 from gym.clients import EnsembleClient, MockClient
 from gym.config import GymConfig
-from gym.judge import Judge
+from gym.judge import Judge, _parse_response
 from gym.query_generator import Query, QueryGenerator, _extract_json
 from gym.retrieval_harness import Retrieved
 from gym.scoring import rate, format_leaderboard
@@ -33,6 +34,10 @@ def test_json_extraction():
     assert _extract_json('```json\n{"winner": "A"}\n```')["winner"] == "A"
     assert _extract_json('blah {"score": 4} trailing')["score"] == 4
     assert _extract_json("not json") == {}
+    # reasoning trace before the answer: take the LAST object, not the first
+    assert _extract_json('Let me think {"winner": "B"} ... final {"winner": "A"}')["winner"] == "A"
+    # braces inside a string value must not truncate the parse
+    assert _extract_json('{"reasoning": "set {x} wins", "winner": "B"}')["winner"] == "B"
     print("  json extraction ok")
 
 
@@ -48,6 +53,15 @@ def test_prefixes():
     assert instruct.document == "{text}"
     assert resolve_template("intfloat/e5-mistral-7b-instruct").query.startswith("Instruct:")
     print("  prefix registry + cache key ok")
+
+
+def test_make_encoder_fallback():
+    # unknown model -> mteb registry raises -> builtin Encoder, not a crash
+    from gym.encoders import Encoder, make_encoder
+    enc = make_encoder("not-a-real/model-xyz", task_name="NFCorpus")
+    assert isinstance(enc, Encoder)
+    assert make_encoder("any/model", task_name="NFCorpus", use_mteb=False).__class__ is Encoder
+    print("  make_encoder fallback ok")
 
 
 def test_query_gen_and_filter():
@@ -130,6 +144,20 @@ def test_ensemble_vote():
     print("  ensemble vote ok")
 
 
+def test_ensemble_judge_parse():
+    # EnsembleClient.chat returns a JSON array of member responses; the judge
+    # must majority-vote it instead of crashing/tieing (the drop-in-judge bug).
+    members = ['{"winner": "A", "reasoning": "x"}',
+               '{"winner": "A", "reasoning": "y"}',
+               '{"winner": "B", "reasoning": "z"}']
+    assert _parse_response(json.dumps(members)) == ("A", "x || y || z", True)
+    # single (non-array) judge response still parses
+    assert _parse_response('{"winner": "tie"}')[:2] == ("tie", "")
+    # unparseable response is flagged, not silently scored
+    assert _parse_response("no json here")[2] is False
+    print("  ensemble judge parse ok")
+
+
 def _fake_retrievals(seed, queries, k=5):
     return [Retrieved(q.qid, q.text, [f"D{seed}{j}" for j in range(k)],
                       [f"result {seed}-{q.qid}-{j}" for j in range(k)])
@@ -180,9 +208,11 @@ if __name__ == "__main__":
     print("Running MTEB Gym smoke tests...\n")
     test_json_extraction()
     test_prefixes()
+    test_make_encoder_fallback()
     test_query_gen_and_filter()
     test_bm25()
     test_ensemble_vote()
+    test_ensemble_judge_parse()
     ratings = test_judge_and_scoring()
     test_correlation(ratings)
     test_exact_permutation_p()

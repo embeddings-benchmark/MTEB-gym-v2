@@ -46,7 +46,8 @@ class RetrievalHarness:
 
     def encode_corpus(self, encoder: Encoder, corpus: dict[str, str]) -> np.ndarray:
         fp = _corpus_fingerprint(corpus)
-        path = self._corpus_cache_path(encoder.model_name, fp)
+        # cache_name (if present) distinguishes prompt variants of the same model
+        path = self._corpus_cache_path(getattr(encoder, "cache_name", encoder.model_name), fp)
         if path.exists():
             return np.load(str(path))
         embs = encoder.encode_documents(list(corpus.values()))

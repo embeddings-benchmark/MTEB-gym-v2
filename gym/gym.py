@@ -21,7 +21,7 @@ from pathlib import Path
 
 from .baselines import BM25Retriever
 from .config import GymConfig
-from .encoders import Encoder
+from .encoders import make_encoder
 from .judge import Judge, Verdict
 from .query_generator import Query, QueryGenerator
 from .retrieval_harness import RetrievalHarness
@@ -160,7 +160,9 @@ class Gym:
         if model_name == "bm25":
             retr = BM25Retriever(top_k=self.cfg.top_k).retrieve(corpus, queries)
         else:
-            enc = Encoder(model_name)
+            enc = make_encoder(model_name, task_name=self.cfg.task_name,
+                               split=self.cfg.corpus_split,
+                               use_mteb=self.cfg.use_mteb_models)
             retr = self.harness.retrieve(enc, corpus, queries)
         self._retr_cache[model_name] = retr
         return retr

@@ -58,9 +58,18 @@ def _win_matrix(verdicts, names) -> np.ndarray:
     return W
 
 
-def _bradley_terry(W: np.ndarray, iters: int = 200, tol: float = 1e-9) -> np.ndarray:
-    """MM algorithm. Returns positive strengths normalised to geometric mean 1."""
+def _bradley_terry(W: np.ndarray, iters: int = 200, tol: float = 1e-9,
+                   smoothing: float = 0.1) -> np.ndarray:
+    """MM algorithm. Returns positive strengths normalised to geometric mean 1.
+
+    `smoothing` adds a small symmetric pseudo-win to every pair. Without it a
+    model with zero total wins never gets its MM update and stays pinned at the
+    initial strength (mid-table after normalisation) instead of converging to
+    the bottom; it also keeps bootstrap resamples from going degenerate.
+    """
     n = W.shape[0]
+    if smoothing:
+        W = W + smoothing * (1.0 - np.eye(n))
     p = np.ones(n, dtype=np.float64)
     wins = W.sum(axis=1)                      # total wins per model
     games = W + W.T                           # symmetric pair counts
@@ -74,7 +83,7 @@ def _bradley_terry(W: np.ndarray, iters: int = 200, tol: float = 1e-9) -> np.nda
                 gij = games[i, j]
                 if gij > 0:
                     denom += gij / (p[i] + p[j])
-            if denom > 0 and wins[i] > 0:
+            if denom > 0:
                 p[i] = wins[i] / denom
         # normalise to geometric mean 1 for identifiability
         gm = np.exp(np.mean(np.log(np.clip(p, 1e-12, None))))
@@ -128,19 +137,41 @@ def rate(verdicts, method="bradley_terry", base=1000.0, scale=400.0,
 
     point = _ratings(verdicts)
 
-    # bootstrap CIs over resampled verdicts
+    # Bootstrap CIs: resample QUERIES (clusters of verdicts), not individual
+    # verdicts. In a round-robin every query produces one verdict per model
+    # pair, so verdicts sharing a qid are correlated (same query difficulty,
+    # same retrieved sets); resampling them independently understates the CI
+    # width. Chatbot Arena resamples battles because each battle is an
+    # independent prompt — our sampling unit is the query.
     rng = np.random.default_rng(seed)
     if bootstrap and len(verdicts) > 1:
-        boot = np.zeros((bootstrap, len(names)))
-        v_arr = np.array(verdicts, dtype=object)
-        for s in range(bootstrap):
-            sample = list(rng.choice(v_arr, size=len(v_arr), replace=True))
+        by_qid: dict[str, list] = {}
+        for v in verdicts:
+            by_qid.setdefault(v.qid, []).append(v)
+        qids = np.array(list(by_qid), dtype=object)
+        rows = []
+        skipped = 0
+        for _ in range(bootstrap):
+            sample: list = []
+            for q in rng.choice(qids, size=len(qids), replace=True):
+                sample.extend(by_qid[q])
             try:
-                boot[s] = _ratings(sample)
+                rows.append(_ratings(sample))
             except Exception:  # noqa: BLE001 - degenerate resample
-                boot[s] = point
-        lo = np.percentile(boot, 2.5, axis=0)
-        hi = np.percentile(boot, 97.5, axis=0)
+                skipped += 1   # excluded from the CI rather than silently
+                continue       # replaced by the point estimate
+        if skipped:
+            import logging
+            logging.getLogger(__name__).warning(
+                "bootstrap: %d/%d resamples were degenerate and excluded",
+                skipped, bootstrap,
+            )
+        if rows:
+            boot = np.vstack(rows)
+            lo = np.percentile(boot, 2.5, axis=0)
+            hi = np.percentile(boot, 97.5, axis=0)
+        else:
+            lo = hi = point
     else:
         lo = hi = point
 

@@ -204,6 +204,25 @@ def test_parse_failure_counter():
     print("  parse-failure counter ok (rate=1.0 on garbage judge)")
 
 
+def test_winless_model_ranks_last():
+    from gym.judge import Verdict
+
+    def v(qid, a, b, score):
+        return Verdict(qid=qid, query="q", model_a=a, model_b=b, score_a=score)
+
+    verdicts = []
+    for i in range(20):
+        verdicts.append(v(f"q{i}", "winner", "mid", 0.75))
+        verdicts.append(v(f"q{i}", "mid", "loser", 1.0))
+        verdicts.append(v(f"q{i}", "winner", "loser", 1.0))
+    ratings = rate(verdicts, bootstrap=100)
+    assert ratings[-1].name == "loser"
+    assert ratings[-1].rating < ratings[1].rating - 50, \
+        "a model that loses every verdict must sink, not sit mid-table"
+    assert all(r.ci >= 0 for r in ratings)
+    print("  winless-model + cluster bootstrap ok")
+
+
 if __name__ == "__main__":
     print("Running MTEB Gym smoke tests...\n")
     test_json_extraction()
@@ -219,4 +238,5 @@ if __name__ == "__main__":
     test_parallel_judging_matches_sequential()
     test_identical_results_short_circuit()
     test_parse_failure_counter()
+    test_winless_model_ranks_last()
     print("\nAll smoke tests passed.")

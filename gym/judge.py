@@ -135,3 +135,140 @@ class Judge:
     def a_first_rate(self) -> float | None:
         """Fraction of decisive verdicts that went to the first-shown system."""
         return (self._first_picks / self._decisive) if self._decisive else None
+
+
+# ---------------------------------------------------------------------------
+# Pointwise judge (ablation vs pairwise)
+# ---------------------------------------------------------------------------
+# Instead of comparing A vs B directly, we score each model's result set
+# independently on a 1-5 scale, then rank models by average score.
+#
+# Cost: O(n * m) calls vs O(n * m^2) for pairwise — linear in queries,
+# not quadratic in model pairs. Tejas's lit review says pointwise matches
+# or beats pairwise on system-ranking correlation, which is the hypothesis
+# we're testing.
+#
+# Output is a dict {model_name: [scores]} — one score per query — which
+# feeds directly into PointwiseRanker.rank() to produce a leaderboard.
+# ---------------------------------------------------------------------------
+
+_POINTWISE_SYSTEM = (
+    "You evaluate a single retrieval result set for a given query. "
+    "Score how well the retrieved documents satisfy the information need, "
+    "considering relevance, coverage, and ranking quality. "
+    "5 = excellent: top results are highly relevant, directly address the query. "
+    "4 = good: mostly relevant with minor gaps. "
+    "3 = mediocre: some relevant documents but significant gaps or noise. "
+    "2 = poor: mostly irrelevant, query barely addressed. "
+    "1 = useless: results are entirely off-topic. "
+    "Be decisive and use the full scale — do not default to 3. "
+    "Reply with strict JSON: {\"score\": 1-5, \"reasoning\": \"one sentence\"}"
+)
+
+
+@dataclass
+class PointwiseScore:
+    qid: str
+    query: str
+    model: str
+    score: float          # 1-5
+    reasoning: str = ""
+    note: str = ""
+
+
+class PointwiseJudge:
+    """
+    Scores each model's retrieved results independently (1-5) rather than
+    comparing two models head-to-head. Use PointwiseRanker.rank() to convert
+    per-query scores into a final leaderboard.
+
+    Usage:
+        judge = PointwiseJudge(client)
+        scores = judge.score_all(retrieved, model_name)   # list[PointwiseScore]
+
+    Run score_all() for each model, then pass all scores to PointwiseRanker.
+    """
+
+    def __init__(self, client, note: str = ""):
+        self.client = client
+        self.note = note
+
+    def _ask(self, query: str, retrieved) -> tuple[float, str]:
+        """Score one (query, result_set) pair. Returns (score 1-5, reasoning)."""
+        msg = [
+            {"role": "system", "content": _POINTWISE_SYSTEM},
+            {"role": "user", "content":
+                f"Query: {query}\n\nRetrieved results:\n{_format_results(retrieved)}\n\n"
+                f"Reply as JSON."},
+        ]
+        out = _extract_json(self.client.chat(msg, temperature=0.0))
+        try:
+            score = float(out.get("score", 3))
+            score = max(1.0, min(5.0, score))   # clamp to valid range
+        except (TypeError, ValueError):
+            score = 3.0                          # neutral fallback
+        return score, out.get("reasoning", "")
+
+    def score_one(self, retrieved, model: str) -> PointwiseScore:
+        """Score a single model's results for a single query."""
+        score, reasoning = self._ask(retrieved.query, retrieved)
+        return PointwiseScore(
+            qid=retrieved.qid, query=retrieved.query,
+            model=model, score=score, reasoning=reasoning, note=self.note,
+        )
+
+    def score_all(self, retrieved_list: list, model: str) -> list[PointwiseScore]:
+        """Score all queries for one model. Call once per model."""
+        return [self.score_one(r, model) for r in retrieved_list]
+
+
+class PointwiseRanker:
+    """
+    Converts per-query pointwise scores into a ranked leaderboard.
+
+    Usage:
+        ranker = PointwiseRanker()
+        for model, retrieved in model_results.items():
+            scores = judge.score_all(retrieved, model)
+            ranker.add(scores)
+        leaderboard = ranker.rank()   # list of (model, mean_score, std)
+    """
+
+    def __init__(self):
+        self._scores: dict[str, list[float]] = {}
+
+    def add(self, scores: list[PointwiseScore]) -> None:
+        for s in scores:
+            self._scores.setdefault(s.model, []).append(s.score)
+
+    def rank(self) -> list[dict]:
+        """Returns list of dicts sorted by mean score descending."""
+        out = []
+        for model, scores in self._scores.items():
+            arr = scores
+            mean = sum(arr) / len(arr)
+            variance = sum((x - mean) ** 2 for x in arr) / len(arr)
+            std = variance ** 0.5
+            out.append({
+                "model": model,
+                "mean_score": round(mean, 3),
+                "std": round(std, 3),
+                "n_queries": len(arr),
+            })
+        out.sort(key=lambda x: x["mean_score"], reverse=True)
+        for i, row in enumerate(out, 1):
+            row["rank"] = i
+        return out
+
+    def format_leaderboard(self) -> str:
+        rows = self.rank()
+        lines = [
+            "=" * 60,
+            f"{'Rank':<5}{'Model':<38}{'Score':>8}{'Std':>6}",
+            "-" * 60,
+        ]
+        for r in rows:
+            short = r["model"].split("/")[-1][:36]
+            lines.append(f"{r['rank']:<5}{short:<38}{r['mean_score']:>8.3f}{r['std']:>6.3f}")
+        lines.append("=" * 60)
+        return "\n".join(lines)

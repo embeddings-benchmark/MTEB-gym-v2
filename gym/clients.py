@@ -122,7 +122,7 @@ class OpenAICompatClient:
 
     def __init__(self, model: str, base_url: str | None = None,
                  api_key: str | None = None, max_tokens: int = 512,
-                 max_retries: int = 4):
+                 max_retries: int = 4, extra_body: dict | None = None):
         from openai import OpenAI
         self.client = OpenAI(
             base_url=base_url,
@@ -131,6 +131,8 @@ class OpenAICompatClient:
         self.model = model
         self.max_tokens = max_tokens
         self.max_retries = max_retries
+        # vLLM knobs, e.g. {"chat_template_kwargs": {"enable_thinking": False}}
+        self.extra_body = extra_body
 
     def chat(self, messages: list[dict], temperature: float = 0.0) -> str:
         for attempt in range(self.max_retries):
@@ -140,6 +142,7 @@ class OpenAICompatClient:
                     messages=messages,
                     temperature=temperature,
                     max_tokens=self.max_tokens,
+                    extra_body=self.extra_body,
                 )
                 return resp.choices[0].message.content or ""
             except Exception:  # noqa: BLE001

@@ -49,7 +49,7 @@ _REGISTRY: list[tuple[str, PromptTemplate]] = [
     # --- e5 instruct family (instruction on queries, BARE passages) ---
     # mteb encodes these with "Instruct: {task}\nQuery: " and
     # apply_instruction_to_passages=False; query:/passage: is wrong for them.
-    # Stopgap until the mteb model wrapper lands and prompts come from ModelMeta.
+    # Used when MTEBEncoder is off/unavailable (it gets prompts from ModelMeta).
     (r"e5.*instruct", PromptTemplate(
         query="Instruct: Given a web search query, retrieve relevant passages "
               "that answer the query\nQuery: {text}",
@@ -138,3 +138,70 @@ class Encoder:
 
     def encode_documents(self, texts: list[str]) -> np.ndarray:
         return self._encode([self.template.wrap_document(t) for t in texts])
+
+
+class MTEBEncoder:
+    """Encode via mteb 2.x, so prompts, pooling and dtype come from the model's
+    ModelMeta (as an official MTEB run would) instead of _REGISTRY above."""
+
+    def __init__(self, model_name: str, task_name: str, split: str = "test",
+                 subset: str = "default", batch_size: int = 32):
+        self.model_name = model_name
+        self.task_name = task_name
+        self.split = split
+        self.subset = subset
+        self.batch_size = batch_size
+        self._model = None
+        self._task_meta = None
+
+    @property
+    def cache_name(self) -> str:
+        # same model encoded with different prompts must not share a cache entry
+        return f"{self.model_name}+mteb"
+
+    def _ensure_model(self):
+        if self._model is None:
+            import mteb
+            self._model = mteb.get_model(self.model_name)
+            self._task_meta = mteb.get_tasks(tasks=[self.task_name])[0].metadata
+
+    def _encode(self, texts: list[str], is_query: bool) -> np.ndarray:
+        self._ensure_model()
+        from datasets import Dataset
+        from mteb._create_dataloaders import create_dataloader  # no public equivalent yet
+        from mteb.types import PromptType
+
+        prompt_type = PromptType.query if is_query else PromptType.document
+        # "id" is required by mteb's corpus standardizer; ignored for queries.
+        ds = Dataset.from_dict({"id": [str(i) for i in range(len(texts))], "text": texts})
+        loader = create_dataloader(ds, task_metadata=self._task_meta,
+                                   prompt_type=prompt_type, input_column="text",
+                                   batch_size=self.batch_size)
+        embs = self._model.encode(loader, task_metadata=self._task_meta,
+                                  hf_split=self.split, hf_subset=self.subset,
+                                  prompt_type=prompt_type)
+        embs = np.asarray(embs, dtype=np.float32)
+        norms = np.linalg.norm(embs, axis=1, keepdims=True)
+        return embs / np.clip(norms, 1e-12, None)   # harness expects unit norm
+
+    def encode_queries(self, texts: list[str]) -> np.ndarray:
+        return self._encode(texts, is_query=True)
+
+    def encode_documents(self, texts: list[str]) -> np.ndarray:
+        return self._encode(texts, is_query=False)
+
+
+def make_encoder(model_name: str, task_name: str, split: str = "test",
+                 use_mteb: bool = True) -> "Encoder | MTEBEncoder":
+    """MTEBEncoder when mteb 2.x knows the model, else the builtin Encoder."""
+    if use_mteb:
+        try:
+            import mteb
+            import mteb._create_dataloaders  # noqa: F401 — absent on mteb 1.x
+            mteb.get_model_meta(model_name)  # raises if unknown to the registry
+            return MTEBEncoder(model_name, task_name, split=split)
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "mteb encoder unavailable for %s (%s); using builtin prompt registry.",
+                model_name, e)
+    return Encoder(model_name)

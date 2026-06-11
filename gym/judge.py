@@ -66,6 +66,28 @@ def _format_results(r) -> str:
     return "\n".join(f"  {i+1}. {t[:300]}" for i, t in enumerate(r.doc_texts))
 
 
+def _parse_response(raw: str) -> tuple[str, str, bool]:
+    """(winner, reasoning, parsed_ok) from a judge response. EnsembleClient.chat
+    returns a JSON array of member responses — majority-vote those."""
+    try:
+        members = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        members = None
+    if isinstance(members, list):
+        from .clients import EnsembleClient
+        outs = [_extract_json(m) for m in members if isinstance(m, str)]
+        winners = [o["winner"] for o in outs if o.get("winner") in ("A", "B", "tie")]
+        if not winners:
+            return "tie", "", False
+        winner, _ = EnsembleClient.vote(winners)
+        reasoning = " || ".join(o.get("reasoning", "") for o in outs if o.get("reasoning"))
+        return winner, reasoning, True
+    out = _extract_json(raw)
+    raw_winner = out.get("winner")
+    parsed_ok = raw_winner in ("A", "B", "tie")
+    return (raw_winner if parsed_ok else "tie"), out.get("reasoning", ""), parsed_ok
+
+
 class Judge:
     def __init__(self, client, flip_positions: bool = True, note: str = "",
                  workers: int = 1):
@@ -95,15 +117,12 @@ class Judge:
                 f"Query: {query}\n\nSystem A results:\n{_format_results(first)}\n\n"
                 f"System B results:\n{_format_results(second)}\n\nReply as JSON."},
         ]
-        out = _extract_json(self.client.chat(msg, temperature=0.0))
-        raw_winner = out.get("winner")
-        parsed_ok = raw_winner in ("A", "B", "tie")
-        winner = raw_winner if parsed_ok else "tie"
+        winner, reasoning, parsed_ok = _parse_response(self.client.chat(msg, temperature=0.0))
         with self._lock:
             self._asks += 1
             if not parsed_ok:
                 self._parse_failures += 1
-        return winner, out.get("reasoning", ""), parsed_ok
+        return winner, reasoning, parsed_ok
 
     def judge_pair(self, ra, rb, model_a: str, model_b: str) -> Verdict:
         """

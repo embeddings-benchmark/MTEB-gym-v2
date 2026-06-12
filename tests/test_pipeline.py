@@ -176,6 +176,41 @@ def test_parallel_judging_matches_sequential():
     print(f"  parallel judging deterministic ok ({len(par)} verdicts)")
 
 
+def test_parallel_query_gen_matches_sequential():
+    # Worker count must never change the generated query set: texts, seed
+    # docs, and qids must be identical, in the same order, at workers=1 and 4.
+    corpus = make_corpus()
+
+    def gen_with(workers, client):
+        cfg = GymConfig(n_queries=12, filter_queries=False,
+                        gen_workers=workers, output_dir="results/_test")
+        return QueryGenerator(client, cfg).generate(corpus)
+
+    seq = gen_with(1, MockClient())
+    par = gen_with(4, MockClient())
+    assert [q.qid for q in par] == [q.qid for q in seq]
+    assert [q.text for q in par] == [q.text for q in seq]
+    assert [q.seed_doc_ids for q in par] == [q.seed_doc_ids for q in seq]
+
+    # A client that deterministically fails ~1/3 of calls (by content hash,
+    # so thread scheduling can't change which calls fail) exercises the
+    # wave-refill retry path; results must still match exactly.
+    class FlakyMock(MockClient):
+        def chat(self, messages, temperature=0.0):
+            prompt = " ".join(m.get("content", "") for m in messages)
+            if self._hash(prompt) % 3 == 0:
+                return "no json here"
+            return super().chat(messages, temperature)
+
+    seq_f = gen_with(1, FlakyMock())
+    par_f = gen_with(4, FlakyMock())
+    assert len(seq_f) == 12, f"flaky retries should still reach target, got {len(seq_f)}"
+    assert [(q.qid, q.text, tuple(q.seed_doc_ids)) for q in par_f] == \
+           [(q.qid, q.text, tuple(q.seed_doc_ids)) for q in seq_f]
+    print(f"  parallel query generation deterministic ok "
+          f"({len(par)} clean, {len(par_f)} with retries)")
+
+
 def test_identical_results_short_circuit():
     class ExplodingClient:
         def chat(self, messages, temperature=0.0):
@@ -289,6 +324,7 @@ if __name__ == "__main__":
     test_correlation(ratings)
     test_exact_permutation_p()
     test_parallel_judging_matches_sequential()
+    test_parallel_query_gen_matches_sequential()
     test_identical_results_short_circuit()
     test_parse_failure_counter()
     test_winless_model_ranks_last()

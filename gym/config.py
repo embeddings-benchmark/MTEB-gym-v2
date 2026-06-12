@@ -18,6 +18,9 @@ class GymConfig:
     gen_overshoot: float = 1.6    # generate this multiple of n_queries before filtering
     min_query_chars: int = 15
     max_query_chars: int = 240
+    gen_workers: int = 16         # concurrent generation calls; results are
+                                  # order-preserving, so worker count never
+                                  # changes the generated query set
 
     # --- query filtering (Rohan's key lever) ---
     filter_queries: bool = True

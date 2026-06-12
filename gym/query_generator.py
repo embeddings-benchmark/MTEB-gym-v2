@@ -20,13 +20,17 @@ Order matters: cheap gates first so we only spend LLM calls on plausible queries
 from __future__ import annotations
 
 import json
+import logging
 import random
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import numpy as np
 
 from .config import GymConfig
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -98,18 +102,42 @@ class QueryGenerator:
         return Query(qid=f"q{idx}", text=q, seed_doc_ids=doc_ids)
 
     def generate(self, corpus: dict[str, str]) -> list[Query]:
+        """Generate queries in order-preserving waves.
+
+        Determinism contract: the shared RNG draws one doc sample per attempt,
+        in the main thread, exactly as the old sequential loop did. The LLM
+        calls fan out over a thread pool, but map() preserves input order and
+        acceptance is evaluated in attempt order, so the generated query list
+        (texts, seed docs, qids) is identical for any worker count — cache
+        files and downstream hashes are unchanged.
+        """
         doc_ids = list(corpus.keys())
         target = int(self.cfg.n_queries * (self.cfg.gen_overshoot if self.cfg.filter_queries else 1.0))
+        cap = target * 3
+        workers = max(1, getattr(self.cfg, "gen_workers", 1))
         out: list[Query] = []
-        i = 0
         attempts = 0
-        while len(out) < target and attempts < target * 3:
-            attempts += 1
-            seeds = self.rng.sample(doc_ids, min(self.cfg.docs_per_query, len(doc_ids)))
-            q = self._one(seeds, corpus, i)
-            if q and self._heuristic_ok(q.text):
-                out.append(q)
-                i += 1
+        while len(out) < target and attempts < cap:
+            # One wave = the number of queries still missing. Failed/rejected
+            # attempts are retried by the next wave, never silently dropped.
+            wave = min(target - len(out), cap - attempts)
+            seeds = [self.rng.sample(doc_ids, min(self.cfg.docs_per_query, len(doc_ids)))
+                     for _ in range(wave)]
+            base = attempts
+            attempts += wave
+            if workers <= 1 or wave <= 1:
+                results = [self._one(s, corpus, base + k) for k, s in enumerate(seeds)]
+            else:
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    results = list(pool.map(
+                        lambda ks: self._one(ks[1], corpus, base + ks[0]),
+                        enumerate(seeds)))
+            for q in results:
+                if q and self._heuristic_ok(q.text):
+                    q.qid = f"q{len(out)}"   # qid = acceptance order, as before
+                    out.append(q)
+            logger.info("query generation: %d/%d kept (%d attempts)",
+                        len(out), target, attempts)
         return out
 
     # ----------------------------------------------------------------- filters
@@ -146,12 +174,10 @@ class QueryGenerator:
             for q in queries:
                 _score(q)
         else:
-            from concurrent.futures import ThreadPoolExecutor
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 list(pool.map(_score, queries))
         if failures:
-            import logging
-            logging.getLogger(__name__).warning(
+            logger.warning(
                 "quality filter: %d/%d scores defaulted to 3 (parse/call failure); "
                 "a misbehaving filter model can silently disable filtering",
                 failures, len(queries),

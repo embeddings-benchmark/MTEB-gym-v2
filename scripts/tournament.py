@@ -77,6 +77,9 @@ def main():
     ap.add_argument("--no-filter", action="store_true")
     ap.add_argument("--workers", type=int, default=8,
                     help="concurrent judge/filter calls (vLLM throughput needs this)")
+    ap.add_argument("--gen-workers", type=int, default=16,
+                    help="concurrent query-generation calls; order-preserving, "
+                         "so the generated query set is identical at any count")
     ap.add_argument("--seed", type=int, default=0,
                     help="query-generation seed (the regeneration sweep varies this)")
     ap.add_argument("--api-key-env", default=None,
@@ -95,7 +98,8 @@ def main():
 
     cfg = GymConfig(task_name=args.task, n_queries=args.n_queries, top_k=args.top_k,
                     method=args.method, filter_queries=not args.no_filter,
-                    judge_workers=args.workers, seed=args.seed, output_dir=args.output)
+                    judge_workers=args.workers, gen_workers=args.gen_workers,
+                    seed=args.seed, output_dir=args.output)
     gym = Gym(cfg, judge_client=build_judge(args), gen_client=build_generator(args))
     gym.run(args.models)
     print(gym.leaderboard_str)

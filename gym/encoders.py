@@ -29,6 +29,78 @@ from dataclasses import dataclass, field
 import numpy as np
 
 
+def _shim_transformers5_for_jina() -> None:
+    """transformers 5.x compat shims for jina-embeddings-v2's legacy remote code.
+
+    jina-bert's trust_remote_code modeling files were written against
+    transformers 4.x and hit three import-time failures on 5.x. Each shim
+    below activates only when the symbol is actually missing, and the whole
+    function is a no-op on transformers < 5:
+
+    1. transformers.onnx was removed, but jina-bert still imports OnnxConfig
+       from it (only as a base class for an export config, never used at
+       inference). Register a stub so the model loads.
+    2. find_pruneable_heads_and_indices was dropped from pytorch_utils;
+       jina's modeling code imports it (head pruning is never invoked at
+       inference, but the import must resolve). Faithful v4 copy.
+    3. PretrainedConfig no longer defaults several attributes that v4-era
+       remote code reads (jina's BertSelfAttention checks config.is_decoder).
+       Restore them as class-level fallbacks only where absent; these are the
+       v4 defaults, so encoder-model semantics are unchanged.
+
+    NOTE: these fix only the three import-time failures. jina-embeddings-v2
+    STILL fails at encode time under transformers 5.x: its remote code builds
+    tensors in __init__ (ALiBi slopes), which crashes under 5.x's meta-device
+    initialization. That fourth incompatibility is NOT fixed here.
+    """
+    import transformers
+
+    if int(transformers.__version__.split(".")[0]) < 5:
+        return  # 4.x still ships all three symbols; nothing to shim
+
+    import sys
+
+    # --- shim 1: stub for the removed transformers.onnx module ---
+    try:
+        import transformers.onnx  # noqa: F401
+    except ImportError:
+        import types
+
+        stub = types.ModuleType("transformers.onnx")
+
+        class OnnxConfig:  # minimal stand-in for the removed base class
+            pass
+
+        stub.OnnxConfig = OnnxConfig
+        sys.modules["transformers.onnx"] = stub
+
+    # --- shim 2: backfill find_pruneable_heads_and_indices ---
+    try:
+        from transformers.pytorch_utils import find_pruneable_heads_and_indices  # noqa: F401
+    except ImportError:
+        import torch
+        import transformers.pytorch_utils as _pu
+
+        def find_pruneable_heads_and_indices(heads, n_heads, head_size, already_pruned_heads):
+            mask = torch.ones(n_heads, head_size)
+            heads = set(heads) - already_pruned_heads
+            for head in heads:
+                head = head - sum(1 if h < head else 0 for h in already_pruned_heads)
+                mask[head] = 0
+            mask = mask.view(-1).contiguous().eq(1)
+            index = torch.arange(len(mask))[mask].long()
+            return heads, index
+
+        _pu.find_pruneable_heads_and_indices = find_pruneable_heads_and_indices
+
+    # --- shim 3: restore v4 PretrainedConfig defaults ---
+    from transformers import PretrainedConfig
+    for _attr, _default in (("is_decoder", False), ("add_cross_attention", False),
+                            ("chunk_size_feed_forward", 0), ("tie_encoder_decoder", False)):
+        if not hasattr(PretrainedConfig, _attr):
+            setattr(PretrainedConfig, _attr, _default)
+
+
 @dataclass
 class PromptTemplate:
     """How a given model wants queries and documents wrapped before encoding."""
@@ -114,6 +186,10 @@ class Encoder:
 
     def _ensure_model(self):
         if self._model is None:
+            if "jina" in self.model_name.lower():
+                # import-time shims only; jina still crashes at encode on
+                # transformers 5.x (meta-device init) — see the shim docstring.
+                _shim_transformers5_for_jina()
             from sentence_transformers import SentenceTransformer
             # trust_remote_code: nomic / gte-Qwen / jina ship custom modeling
             # code and fail to load without it (mteb passes it for these too).
@@ -161,6 +237,8 @@ class MTEBEncoder:
 
     def _ensure_model(self):
         if self._model is None:
+            if "jina" in self.model_name.lower():
+                _shim_transformers5_for_jina()
             import mteb
             self._model = mteb.get_model(self.model_name)
             self._task_meta = mteb.get_tasks(tasks=[self.task_name])[0].metadata

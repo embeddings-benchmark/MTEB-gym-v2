@@ -31,11 +31,13 @@ MTEB_NFCORPUS = {
 
 # bm25 nDCG@10 (BEIR/Anserini reference) per task; bm25 has no entry in the
 # results repo, so it cannot be fetched live. Extend as more tasks are added.
+# bm25 nDCG@10 self-run with mteb/baseline-bm25s (test split); bm25 has no entry
+# in the results repo so it cannot be fetched live. Extend as more tasks are added.
 BM25_NDCG = {
-    "NFCorpus": 32.5,
-    "SciFact": 66.5,
-    "FiQA2018": 23.6,
-    "ArguAna": 31.5,
+    "NFCorpus": 32.1,
+    "SciFact": 68.63,
+    "FiQA2018": 25.14,
+    "ArguAna": 49.29,
 }
 
 

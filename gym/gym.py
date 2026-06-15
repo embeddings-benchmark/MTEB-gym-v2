@@ -20,7 +20,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
-from .baselines import BM25Retriever
+from .baselines import BM25Retriever, ColBERTRetriever
 from .config import GymConfig
 from .encoders import make_encoder
 from .judge import Judge, Verdict
@@ -161,6 +161,15 @@ class Gym:
             return self._retr_cache[model_name]
         if model_name == "bm25":
             retr = BM25Retriever(top_k=self.cfg.top_k).retrieve(corpus, queries)
+        # ColBERT (late interaction) and SPLADE (learned sparse) are additive,
+        # non-dense entrants that go through their own retrievers instead of the
+        # dense matmul harness. Matched by name so callers just pass "colbert".
+        elif model_name == "colbert" or model_name.startswith("colbert"):
+            retr = ColBERTRetriever(top_k=self.cfg.top_k).retrieve(corpus, queries)
+        elif "splade" in model_name:
+            from .baselines import SPLADERetriever  # lazy: optional dep path
+            retr = SPLADERetriever(top_k=self.cfg.top_k,
+                                   model_name=model_name).retrieve(corpus, queries)
         else:
             enc = make_encoder(model_name, task_name=self.cfg.task_name,
                                split=self.cfg.corpus_split,

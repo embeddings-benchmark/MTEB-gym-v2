@@ -19,6 +19,12 @@ from gym.validate import report
 # Use --fetch-truth to re-pull live instead of trusting these.
 MTEB_NFCORPUS = {
     "bm25": 32.5,
+    # ColBERTv2 (colbert-ir/colbertv2.0) official BEIR NFCorpus nDCG@10.
+    # The published ColBERTv2 paper / BEIR leaderboard report ~33.8 (test
+    # split). The gym entrant is the bare name "colbert"; fetch_truth skips
+    # it (no "/"), so this anchor is always used. Replace with a self-run
+    # mteb value if it materially differs.
+    "colbert": 33.8,
     "sentence-transformers/all-MiniLM-L6-v2": 31.59,   # rev 8b3219a9
     "intfloat/multilingual-e5-small": 31.10,           # rev fd1525a9
     "intfloat/multilingual-e5-large-instruct": 36.34,  # rev baa7be48
@@ -28,6 +34,21 @@ MTEB_NFCORPUS = {
     # jina-v2 completes Rohan's original 7 (the agreed tournament set)
     "jinaai/jina-embeddings-v2-base-en": 32.45,        # rev external
 }
+
+# bm25 nDCG@10 (BEIR/Anserini reference) per task; bm25 has no entry in the
+# results repo, so it cannot be fetched live. Extend as more tasks are added.
+BM25_NDCG = {
+    "NFCorpus": 32.1,
+    "SciFact": 68.63,
+    "FiQA2018": 25.14,
+    "ArguAna": 49.29,
+}
+
+
+def _gym_task_and_models(gym_path: str) -> tuple[str, list[str]]:
+    """Read the task name and entrant list straight from the gym leaderboard."""
+    d = json.loads(open(gym_path).read())
+    return d.get("task", "NFCorpus"), [m["name"] for m in d.get("models", [])]
 
 _RESULTS_API = "https://api.github.com/repos/embeddings-benchmark/results/contents/results"
 _RESULTS_RAW = "https://raw.githubusercontent.com/embeddings-benchmark/results/main/results"
@@ -70,14 +91,29 @@ def main():
                     help="'mteb' for built-in anchors, or path to a {model: score} json")
     ap.add_argument("--fetch-truth", action="store_true",
                     help="fetch official scores live from embeddings-benchmark/results "
-                         "instead of the built-in anchors (bm25 keeps its anchor)")
+                         "for the gym's entrants (bm25 keeps its BEIR reference anchor)")
+    ap.add_argument("--task", default=None,
+                    help="task to anchor against; defaults to the task in the gym leaderboard")
     ap.add_argument("--bootstrap", type=int, default=1000)
     args = ap.parse_args()
 
-    truth = MTEB_NFCORPUS if args.truth == "mteb" else json.loads(open(args.truth).read())
+    gym_task, gym_models = _gym_task_and_models(args.gym)
+    task = args.task or gym_task
+
+    if args.truth != "mteb":
+        truth = json.loads(open(args.truth).read())
+    elif task == "NFCorpus":
+        truth = dict(MTEB_NFCORPUS)
+    else:
+        # built-in dict is NFCorpus-only; for other tasks start from the bm25
+        # reference and rely on --fetch-truth for the dense entrants.
+        truth = {"bm25": BM25_NDCG[task]} if "bm25" in gym_models and task in BM25_NDCG else {}
     if args.fetch_truth:
-        fetched = fetch_truth(list(truth))
-        print(f"fetched {len(fetched)} official scores from embeddings-benchmark/results")
+        # fetch over the gym's entrants (not just the built-in keys) and for the
+        # leaderboard's task (not a hardcoded one), so added models and non-NFCorpus
+        # runs get the right official scores instead of being dropped or mis-anchored.
+        fetched = fetch_truth(gym_models, task=task)
+        print(f"fetched {len(fetched)} official {task} scores from embeddings-benchmark/results")
         truth = {**truth, **fetched}
     res = report(args.gym, truth, bootstrap=args.bootstrap)
 

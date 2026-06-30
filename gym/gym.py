@@ -102,9 +102,16 @@ class Gym:
         load_data() populates task.dataset[subset][split]["corpus"] as a HF
         Dataset with id/title/text columns and task.corpus no longer exists.
         """
-        import mteb
+        import mteb, os, random
         task = mteb.get_tasks(tasks=[self.cfg.task_name])[0]
         task.load_data()
+
+        # Opt-in corpus cap (default OFF) so giant BEIR corpora (MSMARCO/DBPedia/NQ/HotpotQA/FEVER)
+        # fit on one GPU. Seeded by cfg.seed for reproducibility. The gym generates its own queries
+        # from whatever corpus this returns, so a seeded subsample is self-consistent; validation vs
+        # the full-corpus official nDCG@10 anchor is an approximation, reported as a subsampled arm.
+        _cap = os.environ.get("GYM_MAX_CORPUS_DOCS")
+        _cap = int(_cap) if _cap else None
 
         legacy = getattr(task, "corpus", None)
         if legacy:                                         # mteb 1.x
@@ -115,6 +122,10 @@ class Gym:
                     out[did] = (doc.get("title", "") + " " + doc.get("text", "")).strip()
                 else:                                      # plain string
                     out[did] = str(doc).strip()
+            if _cap and len(out) > _cap:
+                keys = sorted(out)
+                random.Random(self.cfg.seed).shuffle(keys)
+                out = {k: out[k] for k in keys[:_cap]}
             return out
 
         # mteb 2.x
@@ -122,6 +133,8 @@ class Gym:
         subset = subsets.get("default") or subsets[next(iter(subsets))]
         split_data = subset.get(self.cfg.corpus_split) or subset[next(iter(subset))]
         corpus_ds = split_data["corpus"]
+        if _cap and len(corpus_ds) > _cap:                 # RAM-safe: never materialize the full giant corpus
+            corpus_ds = corpus_ds.shuffle(seed=self.cfg.seed).select(range(_cap))
         return {
             row["id"]: ((row.get("title") or "") + " " + (row.get("text") or "")).strip()
             for row in corpus_ds

@@ -270,14 +270,20 @@ class MTEBEncoder:
 
 
 def make_encoder(model_name: str, task_name: str, split: str = "test",
+                 subset: str = "default",
                  use_mteb: bool = True) -> "Encoder | MTEBEncoder":
-    """MTEBEncoder when mteb 2.x knows the model, else the builtin Encoder."""
+    """MTEBEncoder when mteb 2.x knows the model, else the builtin Encoder.
+
+    `subset` is the resolved hf_subset the corpus was read from (Gym threads the
+    same key it loaded), so multi-subset tasks are not all mis-encoded as the
+    'default' subset.
+    """
     if use_mteb:
         try:
             import mteb
             import mteb._create_dataloaders  # noqa: F401 — absent on mteb 1.x
             mteb.get_model_meta(model_name)  # raises if unknown to the registry
-            return MTEBEncoder(model_name, task_name, split=split)
+            return MTEBEncoder(model_name, task_name, split=split, subset=subset)
         except Exception as e:  # noqa: BLE001
             logging.getLogger(__name__).warning(
                 "mteb encoder unavailable for %s (%s); using builtin prompt registry.",

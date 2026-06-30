@@ -66,8 +66,16 @@ class BM25Retriever:
                         continue
                     denom = f + self.k1 * (1 - self.b + self.b * lengths[di] / avgdl)
                     scores[di] += w * (f * (self.k1 + 1)) / denom
-            idx = np.argpartition(-scores, k - 1)[:k]
-            idx = idx[np.argsort(-scores[idx])]
+            # No vocabulary overlap (or an empty corpus) -> every score is 0 and
+            # argpartition would return an arbitrary top-k, inventing relevance
+            # out of tie-breaking noise. Return nothing for this query instead.
+            if N == 0 or not scores.any():
+                out.append(Retrieved(qid=q.qid, query=q.text, doc_ids=[], doc_texts=[]))
+                continue
+            # Stable top-k: rank by descending score, ties broken by ascending
+            # doc index, so the result is deterministic regardless of corpus
+            # iteration order (argpartition/argsort leave ties unspecified).
+            idx = np.lexsort((np.arange(N), -scores))[:k]
             out.append(Retrieved(
                 qid=q.qid, query=q.text,
                 doc_ids=[doc_ids[j] for j in idx],
@@ -118,6 +126,18 @@ class ColBERTRetriever:
                  query_batch_size: int = 128,
                  query_score_chunk: int = 16,
                  device: str | None = None):
+        # Fail fast at construction (i.e. when "colbert" is actually in the
+        # roster) if the late-interaction dep is missing, instead of crashing a
+        # multi-hour tournament at retrieve-time on the first ColBERT pair.
+        # torch/pylate stay lazy everywhere else in the module.
+        try:
+            import pylate  # noqa: F401, PLC0415
+        except ImportError as e:
+            raise RuntimeError(
+                "ColBERT entrant requires the 'pylate' package "
+                "(pip install pylate); remove 'colbert' from the roster to run "
+                "without it."
+            ) from e
         self.top_k = top_k
         self.checkpoint = checkpoint
         self.doc_batch_size = doc_batch_size

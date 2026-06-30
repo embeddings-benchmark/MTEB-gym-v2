@@ -60,6 +60,10 @@ class Verdict:
     raw: list[str] = field(default_factory=list)   # per-order winners, for audit
     reasoning: str = ""
     note: str = ""
+    # per-order judge-parse success, so parse_failure_rate can be recomputed
+    # from disk on cached/resumed runs (empty on verdicts written before this
+    # field existed, and on "identical" short-circuits that make no judge call)
+    parsed_ok: list[bool] = field(default_factory=list)
 
 
 def _format_results(r) -> str:
@@ -73,9 +77,15 @@ def _parse_response(raw: str) -> tuple[str, str, bool]:
         members = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         members = None
-    if isinstance(members, list):
+    # A real ensemble response is a JSON array of member-response STRINGS
+    # (EnsembleClient.chat packs them that way). A lone judge that happens to
+    # emit a top-level JSON array of objects must NOT be voted as an ensemble:
+    # that path drops every dict element and silently returns a parse-failure
+    # tie (the v0.1 tie-flattening bug). Require all-string elements, else fall
+    # through to single-object parsing below.
+    if isinstance(members, list) and members and all(isinstance(m, str) for m in members):
         from .clients import EnsembleClient
-        outs = [_extract_json(m) for m in members if isinstance(m, str)]
+        outs = [_extract_json(m) for m in members]
         winners = [o["winner"] for o in outs if o.get("winner") in ("A", "B", "tie")]
         if not winners:
             return "tie", "", False
@@ -144,10 +154,11 @@ class Judge:
         raws: list[str] = []
         scores: list[float] = []
         reasonings: list[str] = []
+        parsed: list[bool] = []
 
         # Order 1: A shown first.
-        w1, why1, _ok1 = self._ask(ra.query, ra, rb)
-        raws.append(w1); reasonings.append(why1)
+        w1, why1, ok1 = self._ask(ra.query, ra, rb)
+        raws.append(w1); reasonings.append(why1); parsed.append(ok1)
         scores.append(_OUTCOME[w1])
         if w1 != "tie":
             with self._lock:
@@ -157,8 +168,8 @@ class Judge:
 
         if self.flip:
             # Order 2: B shown first -> map its 'A'/'B' back to our A/B space.
-            w2, why2, _ok2 = self._ask(ra.query, rb, ra)
-            raws.append(w2); reasonings.append(why2)
+            w2, why2, ok2 = self._ask(ra.query, rb, ra)
+            raws.append(w2); reasonings.append(why2); parsed.append(ok2)
             # In flipped order, "A" means model_b won.
             mapped = {"A": 0.0, "B": 1.0, "tie": 0.5}[w2]
             scores.append(mapped)
@@ -173,6 +184,7 @@ class Judge:
             qid=ra.qid, query=ra.query, model_a=model_a, model_b=model_b,
             score_a=score_a, raw=raws,
             reasoning=" | ".join(r for r in reasonings if r), note=self.note,
+            parsed_ok=parsed,
         )
 
     def judge_all(self, retr_a: list, retr_b: list, model_a: str, model_b: str,

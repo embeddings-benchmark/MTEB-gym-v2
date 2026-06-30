@@ -10,6 +10,7 @@ L2-normalised vectors — no per-query division, no overflow warnings.
 from __future__ import annotations
 
 import hashlib
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -62,7 +63,15 @@ class RetrievalHarness:
         if path.exists():
             return np.load(str(path))
         embs = encoder.encode_documents(list(corpus.values()))
-        np.save(str(path), embs)
+        # Atomic write: a crash or SLURM preemption mid-save would otherwise
+        # leave a truncated .npy that every future run silently trusts via
+        # np.load. Write to a temp file (a file handle, so np.save does not
+        # re-append .npy to the name), then os.replace -- atomic on the same
+        # filesystem -- so the cache path only ever appears complete.
+        tmp = str(path) + ".tmp"
+        with open(tmp, "wb") as fh:
+            np.save(fh, embs)
+        os.replace(tmp, str(path))
         return embs
 
     def retrieve(self, encoder: Encoder, corpus: dict[str, str],

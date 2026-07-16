@@ -230,6 +230,18 @@ class Gym:
                                subset=getattr(self, "_corpus_subset", "default"),
                                use_mteb=self.cfg.use_mteb_models)
             retr = self.harness.retrieve(enc, corpus, queries)
+            # Free this model's GPU memory before the next encoder loads. Only the
+            # Retrieved lists (CPU) live in _retr_cache, so the encoder is safe to drop.
+            # Without this, 7B-class encoders accumulate on one GPU and OOM mid-
+            # tournament (observed on NFCorpus/FiQA at the 25-model roster, 2026-07-07).
+            del enc
+            try:
+                import gc as _gc, torch as _torch
+                _gc.collect()
+                if _torch.cuda.is_available():
+                    _torch.cuda.empty_cache()
+            except Exception:
+                pass
         self._retr_cache[model_name] = retr
         return retr
 

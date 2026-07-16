@@ -187,6 +187,29 @@ class Judge:
             parsed_ok=parsed,
         )
 
+    def _early_failure_guard(self, n_done: int, n_failed: int) -> None:
+        """Abort loudly when the judge endpoint is effectively dead.
+
+        A dead endpoint / bad API key makes every verdict a parse-failure tie;
+        without this guard that surfaces as a flat leaderboard instead of an
+        error (observed: 12k/12k silent ties on a broken judge URL). Checked
+        after the first GYM_EARLY_FAIL_WINDOW verdicts (default 30): if more
+        than GYM_MAX_EARLY_PARSE_FAIL (default 0.5) of them failed to parse,
+        raise instead of continuing.
+        """
+        import os
+        window = int(os.environ.get("GYM_EARLY_FAIL_WINDOW", "30"))
+        if n_done != window:
+            return
+        max_rate = float(os.environ.get("GYM_MAX_EARLY_PARSE_FAIL", "0.5"))
+        rate = n_failed / max(n_done, 1)
+        if rate > max_rate:
+            raise RuntimeError(
+                f"judge parse-failure rate {rate:.0%} over the first {n_done} "
+                f"verdicts (> {max_rate:.0%}): the judge endpoint is likely dead "
+                "or the API key invalid. Aborting instead of silently scoring "
+                "ties. Set GYM_MAX_EARLY_PARSE_FAIL=1.0 to override.")
+
     def judge_all(self, retr_a: list, retr_b: list, model_a: str, model_b: str,
                   on_verdict=None) -> list[Verdict]:
         """Judge every shared query. `on_verdict`, if given, is called once per
@@ -195,9 +218,21 @@ class Judge:
         by_qid = {r.qid: r for r in retr_b}
         pairs = [(ra, by_qid[ra.qid]) for ra in retr_a if ra.qid in by_qid]
 
+        import threading
+        _efg_lock = threading.Lock()
+        _efg = {"done": 0, "failed": 0}
+
         def _one(pair):
             ra, rb = pair
             v = self.judge_pair(ra, rb, model_a, model_b)
+            # early dead-endpoint guard: a verdict whose every judge call failed
+            # to parse (parsed_ok all-False; empty = no call made, not a failure)
+            failed = bool(getattr(v, "parsed_ok", None)) and not any(v.parsed_ok)
+            with _efg_lock:
+                _efg["done"] += 1
+                if failed:
+                    _efg["failed"] += 1
+                self._early_failure_guard(_efg["done"], _efg["failed"])
             if on_verdict is not None:
                 on_verdict(v)
             return v

@@ -198,9 +198,23 @@ class Gym:
         path = self._queries_path()
         if path.exists():
             data = json.loads(path.read_text())
-            return [Query(**q) for q in data]
+            if data:
+                return [Query(**q) for q in data]
+            # An empty query cache is a crash artifact (e.g. generation ran
+            # against a dead generator and every call failed): treat it as a
+            # miss and regenerate, never trust it.
+            logger.warning("empty query cache at %s -- regenerating", path)
+            path.unlink()
         gen = QueryGenerator(self.gen_client, self.cfg)
         queries = gen.run(corpus)
+        if not queries:
+            # Never persist or proceed with zero queries: downstream this
+            # surfaces as an opaque size-0 IndexError inside the encoder
+            # dataloader. A dead generator endpoint must fail loudly here.
+            raise RuntimeError(
+                f"query generation returned 0 retained queries for "
+                f"{self.cfg.task_name}: the generator endpoint is likely dead "
+                "or the filter rejected everything. Not writing a cache file.")
         path.write_text(json.dumps([asdict(q) for q in queries], indent=2))
         return queries
 

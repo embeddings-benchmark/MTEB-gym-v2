@@ -218,10 +218,26 @@ class Encoder:
                     }}
             except Exception:
                 pass
-            self._model = SentenceTransformer(
-                self.model_name, device=self._device, trust_remote_code=True,
-                **_kw
-            )
+            try:
+                self._model = SentenceTransformer(
+                    self.model_name, device=self._device, trust_remote_code=True,
+                    **_kw
+                )
+            except ValueError as _sdpa_err:
+                # Some custom-code architectures (e.g. Alibaba's NewModel behind
+                # gte-base-en-v1.5) do not support sdpa and refuse to load with
+                # the kwarg. Eager is safe here because max_seq_length is capped
+                # below, which bounds the eager mask to ~1GB.
+                if "scaled_dot_product" not in str(_sdpa_err):
+                    raise
+                logging.getLogger(__name__).warning(
+                    "%s does not support sdpa; retrying with default attention.",
+                    self.model_name)
+                _kw.get("model_kwargs", {}).pop("attn_implementation", None)
+                self._model = SentenceTransformer(
+                    self.model_name, device=self._device, trust_remote_code=True,
+                    **_kw
+                )
             # The fallback must truncate: some ST configs leave max_seq_length
             # effectively unbounded, so a single ~46k-token document builds a
             # 128-256GB attention mask (observed with e5-mistral on FEVER) and

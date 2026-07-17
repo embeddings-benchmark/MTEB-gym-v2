@@ -266,6 +266,19 @@ class MTEBEncoder:
                     "MTEBEncoder lazy-load failed for %s (%s); falling back to "
                     "builtin Encoder (trust_remote_code, registry prompts).",
                     self.model_name, e)
+                # free any partially-loaded weights before the fallback loads its
+                # own instance: mteb.get_model can put a full fp32 copy on the GPU
+                # and THEN raise (e.g. a kwarg mismatch), and that copy lingers in
+                # the exception frame -> two 7B instances -> OOM on fresh encodes
+                # (observed: gte-Qwen2-7B double-load killing nano-NFCorpus/DBPedia).
+                self._model = None
+                try:
+                    import gc, torch
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
                 self._fallback = Encoder(self.model_name)
 
     def _encode(self, texts: list[str], is_query: bool) -> np.ndarray:

@@ -198,8 +198,21 @@ class Encoder:
             from sentence_transformers import SentenceTransformer
             # trust_remote_code: nomic / gte-Qwen / jina ship custom modeling
             # code and fail to load without it (mteb passes it for these too).
+            # Load in bf16 on GPU: the SentenceTransformer default is fp32,
+            # which for 7B-class models means ~30GB weights plus a cast
+            # transient -- gte-Qwen2-7B OOMs an empty 80GB GPU this way even
+            # in an isolated process. The mteb path serves these models in
+            # bf16; match it. (fp32 kept on CPU, where bf16 is slow.)
+            _kw = {}
+            try:
+                import torch as _t
+                if _t.cuda.is_available():
+                    _kw = {"model_kwargs": {"torch_dtype": _t.bfloat16}}
+            except Exception:
+                pass
             self._model = SentenceTransformer(
-                self.model_name, device=self._device, trust_remote_code=True
+                self.model_name, device=self._device, trust_remote_code=True,
+                **_kw
             )
         return self._model
 

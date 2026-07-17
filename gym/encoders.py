@@ -102,8 +102,6 @@ def _shim_transformers5_for_jina() -> None:
             setattr(PretrainedConfig, _attr, _default)
 
 
-@dataclass
-
 def _cap_doc_chars(texts):
     """Optional encode-time character cap (GYM_MAX_DOC_CHARS).
 
@@ -119,6 +117,7 @@ def _cap_doc_chars(texts):
         return texts
     return [t[:cap] for t in texts]
 
+@dataclass
 class PromptTemplate:
     """How a given model wants queries and documents wrapped before encoding."""
 

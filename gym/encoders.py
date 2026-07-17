@@ -103,6 +103,22 @@ def _shim_transformers5_for_jina() -> None:
 
 
 @dataclass
+
+def _cap_doc_chars(texts):
+    """Optional encode-time character cap (GYM_MAX_DOC_CHARS).
+
+    Giant-corpus documents can run to ~46k tokens; models truncate internally
+    at their max sequence length anyway, but several encode paths materialize
+    quadratic attention over the full tokenized length first (observed as
+    100-256GB allocations). Capping characters before tokenization bounds
+    every path. Applied at encode time only, so corpus fingerprints and cache
+    keys are unchanged.
+    """
+    cap = int(os.environ.get("GYM_MAX_DOC_CHARS", "0") or 0)
+    if not cap:
+        return texts
+    return [t[:cap] for t in texts]
+
 class PromptTemplate:
     """How a given model wants queries and documents wrapped before encoding."""
 
@@ -267,6 +283,7 @@ class Encoder:
         return self._encode([self.template.wrap_query(t) for t in texts])
 
     def encode_documents(self, texts: list[str]) -> np.ndarray:
+        texts = _cap_doc_chars(texts)
         return self._encode([self.template.wrap_document(t) for t in texts])
 
 
@@ -363,6 +380,7 @@ class MTEBEncoder:
         return self._encode(texts, is_query=True)
 
     def encode_documents(self, texts: list[str]) -> np.ndarray:
+        texts = _cap_doc_chars(texts)
         return self._encode(texts, is_query=False)
 
 

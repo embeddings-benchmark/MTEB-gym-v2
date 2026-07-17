@@ -222,6 +222,18 @@ class Encoder:
                 self.model_name, device=self._device, trust_remote_code=True,
                 **_kw
             )
+            # The fallback must truncate: some ST configs leave max_seq_length
+            # effectively unbounded, so a single ~46k-token document builds a
+            # 128-256GB attention mask (observed with e5-mistral on FEVER) and
+            # produces meaningless beyond-training-length embeddings besides.
+            # mteb-path models truncate to their configured lengths; match it.
+            cap = int(os.environ.get("GYM_MAX_SEQ", "4096"))
+            try:
+                cur = getattr(self._model, "max_seq_length", None)
+                if cur is None or int(cur) > cap:
+                    self._model.max_seq_length = cap
+            except Exception:
+                self._model.max_seq_length = cap
         return self._model
 
     def _encode(self, texts: list[str]) -> np.ndarray:

@@ -207,7 +207,15 @@ class Encoder:
             try:
                 import torch as _t
                 if _t.cuda.is_available():
-                    _kw = {"model_kwargs": {"torch_dtype": _t.bfloat16}}
+                    # sdpa is memory-linear; the eager path materializes the
+                    # full causal mask, which on long documents is a single
+                    # 100-256GB allocation for Mistral/Qwen2-arch 7B encoders
+                    # (observed on Touche, TRECCOVID, FEVER). Models that do
+                    # not accept the kwarg raise immediately and loudly.
+                    _kw = {"model_kwargs": {
+                        "torch_dtype": _t.bfloat16,
+                        "attn_implementation": "sdpa",
+                    }}
             except Exception:
                 pass
             self._model = SentenceTransformer(

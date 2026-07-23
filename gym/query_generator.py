@@ -152,30 +152,29 @@ class QueryGenerator:
         return True
 
     def _llm_quality(self, queries: list[Query]) -> None:
-        failures = 0
-
-        def _score(q: Query) -> None:
-            nonlocal failures
+        def _score(q: Query) -> int:
+            """Score one query in place; return 1 if its score had to be
+            defaulted (parse/call failure), 0 otherwise. Returning a count
+            instead of mutating a shared `failures` avoids a data race when the
+            pool runs _score across worker threads with no lock."""
             msg = [
                 {"role": "system", "content": _FILTER_SYSTEM},
                 {"role": "user", "content": f"Query: {q.text}\nReply as JSON."},
             ]
             try:
                 out = _extract_json(self.client.chat(msg, temperature=0.0))
-                if "score" not in out:
-                    failures += 1
                 q.quality = int(out.get("score", 3))
+                return 0 if "score" in out else 1
             except Exception:  # noqa: BLE001
-                failures += 1
                 q.quality = 3   # neutral on failure rather than dropping signal
+                return 1
 
         workers = max(1, getattr(self.cfg, "judge_workers", 1))
         if workers <= 1 or len(queries) <= 1:
-            for q in queries:
-                _score(q)
+            failures = sum(_score(q) for q in queries)
         else:
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                list(pool.map(_score, queries))
+                failures = sum(pool.map(_score, queries))
         if failures:
             logger.warning(
                 "quality filter: %d/%d scores defaulted to 3 (parse/call failure); "

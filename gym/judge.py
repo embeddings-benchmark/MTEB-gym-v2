@@ -60,6 +60,10 @@ class Verdict:
     raw: list[str] = field(default_factory=list)   # per-order winners, for audit
     reasoning: str = ""
     note: str = ""
+    # per-order judge-parse success, so parse_failure_rate can be recomputed
+    # from disk on cached/resumed runs (empty on verdicts written before this
+    # field existed, and on "identical" short-circuits that make no judge call)
+    parsed_ok: list[bool] = field(default_factory=list)
 
 
 def _format_results(r) -> str:
@@ -73,9 +77,15 @@ def _parse_response(raw: str) -> tuple[str, str, bool]:
         members = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         members = None
-    if isinstance(members, list):
+    # A real ensemble response is a JSON array of member-response STRINGS
+    # (EnsembleClient.chat packs them that way). A lone judge that happens to
+    # emit a top-level JSON array of objects must NOT be voted as an ensemble:
+    # that path drops every dict element and silently returns a parse-failure
+    # tie (the v0.1 tie-flattening bug). Require all-string elements, else fall
+    # through to single-object parsing below.
+    if isinstance(members, list) and members and all(isinstance(m, str) for m in members):
         from .clients import EnsembleClient
-        outs = [_extract_json(m) for m in members if isinstance(m, str)]
+        outs = [_extract_json(m) for m in members]
         winners = [o["winner"] for o in outs if o.get("winner") in ("A", "B", "tie")]
         if not winners:
             return "tie", "", False
@@ -144,10 +154,11 @@ class Judge:
         raws: list[str] = []
         scores: list[float] = []
         reasonings: list[str] = []
+        parsed: list[bool] = []
 
         # Order 1: A shown first.
-        w1, why1, _ok1 = self._ask(ra.query, ra, rb)
-        raws.append(w1); reasonings.append(why1)
+        w1, why1, ok1 = self._ask(ra.query, ra, rb)
+        raws.append(w1); reasonings.append(why1); parsed.append(ok1)
         scores.append(_OUTCOME[w1])
         if w1 != "tie":
             with self._lock:
@@ -157,8 +168,8 @@ class Judge:
 
         if self.flip:
             # Order 2: B shown first -> map its 'A'/'B' back to our A/B space.
-            w2, why2, _ok2 = self._ask(ra.query, rb, ra)
-            raws.append(w2); reasonings.append(why2)
+            w2, why2, ok2 = self._ask(ra.query, rb, ra)
+            raws.append(w2); reasonings.append(why2); parsed.append(ok2)
             # In flipped order, "A" means model_b won.
             mapped = {"A": 0.0, "B": 1.0, "tie": 0.5}[w2]
             scores.append(mapped)
@@ -173,7 +184,31 @@ class Judge:
             qid=ra.qid, query=ra.query, model_a=model_a, model_b=model_b,
             score_a=score_a, raw=raws,
             reasoning=" | ".join(r for r in reasonings if r), note=self.note,
+            parsed_ok=parsed,
         )
+
+    def _early_failure_guard(self, n_done: int, n_failed: int) -> None:
+        """Abort loudly when the judge endpoint is effectively dead.
+
+        A dead endpoint / bad API key makes every verdict a parse-failure tie;
+        without this guard that surfaces as a flat leaderboard instead of an
+        error (observed: 12k/12k silent ties on a broken judge URL). Checked
+        after the first GYM_EARLY_FAIL_WINDOW verdicts (default 30): if more
+        than GYM_MAX_EARLY_PARSE_FAIL (default 0.5) of them failed to parse,
+        raise instead of continuing.
+        """
+        import os
+        window = int(os.environ.get("GYM_EARLY_FAIL_WINDOW", "30"))
+        if n_done != window:
+            return
+        max_rate = float(os.environ.get("GYM_MAX_EARLY_PARSE_FAIL", "0.5"))
+        rate = n_failed / max(n_done, 1)
+        if rate > max_rate:
+            raise RuntimeError(
+                f"judge parse-failure rate {rate:.0%} over the first {n_done} "
+                f"verdicts (> {max_rate:.0%}): the judge endpoint is likely dead "
+                "or the API key invalid. Aborting instead of silently scoring "
+                "ties. Set GYM_MAX_EARLY_PARSE_FAIL=1.0 to override.")
 
     def judge_all(self, retr_a: list, retr_b: list, model_a: str, model_b: str,
                   on_verdict=None) -> list[Verdict]:
@@ -183,9 +218,21 @@ class Judge:
         by_qid = {r.qid: r for r in retr_b}
         pairs = [(ra, by_qid[ra.qid]) for ra in retr_a if ra.qid in by_qid]
 
+        import threading
+        _efg_lock = threading.Lock()
+        _efg = {"done": 0, "failed": 0}
+
         def _one(pair):
             ra, rb = pair
             v = self.judge_pair(ra, rb, model_a, model_b)
+            # early dead-endpoint guard: a verdict whose every judge call failed
+            # to parse (parsed_ok all-False; empty = no call made, not a failure)
+            failed = bool(getattr(v, "parsed_ok", None)) and not any(v.parsed_ok)
+            with _efg_lock:
+                _efg["done"] += 1
+                if failed:
+                    _efg["failed"] += 1
+                self._early_failure_guard(_efg["done"], _efg["failed"])
             if on_verdict is not None:
                 on_verdict(v)
             return v

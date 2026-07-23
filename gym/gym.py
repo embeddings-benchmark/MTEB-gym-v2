@@ -15,12 +15,13 @@ import hashlib
 import itertools
 import json
 import logging
+import os
 import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
 
-from .baselines import BM25Retriever
+from .baselines import BM25Retriever, ColBERTRetriever
 from .config import GymConfig
 from .encoders import make_encoder
 from .judge import Judge, Verdict
@@ -70,6 +71,24 @@ def _a_first_rate_from(verdicts: list[Verdict]) -> float | None:
     return (first / decisive) if decisive else None
 
 
+def _parse_failure_rate_from(verdicts: list[Verdict]) -> float | None:
+    """Judge parse-failure rate recomputed from persisted per-order flags.
+
+    Like _a_first_rate_from, a pure function over verdict files, so a cached or
+    resumed run reports the true rate instead of the in-process judge counter
+    (which only saw whatever queries this run actually judged). Verdicts written
+    before parsed_ok existed carry an empty list and are skipped; "identical"
+    short-circuits make no judge call and contribute nothing.
+    """
+    asks = failures = 0
+    for v in verdicts:
+        for ok in v.parsed_ok:
+            asks += 1
+            if not ok:
+                failures += 1
+    return (failures / asks) if asks else None
+
+
 class Gym:
     def __init__(self, cfg: GymConfig, judge_client, gen_client=None):
         self.cfg = cfg
@@ -81,6 +100,9 @@ class Gym:
                            note=cfg.judge_batch_note, workers=cfg.judge_workers)
         self._retr_cache: dict[str, list] = {}
         self.leaderboard_str = ""
+        # Resolved in load_corpus for mteb 2.x multi-subset tasks so the encoder
+        # is told the same hf_subset the corpus was actually read from (#9).
+        self._corpus_subset = "default"
 
         # Self-preference bias tracks the judge's own perplexity over the text
         # it rates (Wataoka et al. 2024), so LLM-generated queries should not
@@ -102,9 +124,16 @@ class Gym:
         load_data() populates task.dataset[subset][split]["corpus"] as a HF
         Dataset with id/title/text columns and task.corpus no longer exists.
         """
-        import mteb
+        import mteb, random
         task = mteb.get_tasks(tasks=[self.cfg.task_name])[0]
         task.load_data()
+
+        # Opt-in corpus cap (default OFF) so giant BEIR corpora (MSMARCO/DBPedia/NQ/HotpotQA/FEVER)
+        # fit on one GPU. Seeded by cfg.seed for reproducibility. The gym generates its own queries
+        # from whatever corpus this returns, so a seeded subsample is self-consistent; validation vs
+        # the full-corpus official nDCG@10 anchor is an approximation, reported as a subsampled arm.
+        _cap = os.environ.get("GYM_MAX_CORPUS_DOCS")
+        _cap = int(_cap) if _cap else None
 
         legacy = getattr(task, "corpus", None)
         if legacy:                                         # mteb 1.x
@@ -115,13 +144,26 @@ class Gym:
                     out[did] = (doc.get("title", "") + " " + doc.get("text", "")).strip()
                 else:                                      # plain string
                     out[did] = str(doc).strip()
+            if _cap and len(out) > _cap:
+                keys = sorted(out)
+                random.Random(self.cfg.seed).shuffle(keys)
+                out = {k: out[k] for k in keys[:_cap]}
             return out
 
         # mteb 2.x
         subsets = task.dataset
-        subset = subsets.get("default") or subsets[next(iter(subsets))]
+        # Remember which subset KEY we read, so make_encoder gets the same
+        # hf_subset (a hardcoded "default" mis-encodes multi-subset tasks) (#9).
+        # Truthiness, not mere membership, to match the inner split line below:
+        # an empty-but-present "default" subset must fall through to the first
+        # real subset (else this picks {} and the next line StopIterations).
+        subset_key = "default" if subsets.get("default") else next(iter(subsets))
+        self._corpus_subset = subset_key
+        subset = subsets[subset_key]
         split_data = subset.get(self.cfg.corpus_split) or subset[next(iter(subset))]
         corpus_ds = split_data["corpus"]
+        if _cap and len(corpus_ds) > _cap:                 # RAM-safe: never materialize the full giant corpus
+            corpus_ds = corpus_ds.shuffle(seed=self.cfg.seed).select(range(_cap))
         return {
             row["id"]: ((row.get("title") or "") + " " + (row.get("text") or "")).strip()
             for row in corpus_ds
@@ -139,6 +181,13 @@ class Gym:
         key = (f"{gen_id}|{c.task_name}|{c.n_queries}|{c.seed}|{c.docs_per_query}|"
                f"{c.gen_overshoot}|{c.filter_queries}|{c.filter_min_score}|"
                f"{c.dedup_threshold}|{c.min_query_chars}|{c.max_query_chars}")
+        # Fold the corpus-subsample cap in: queries are generated from the (capped)
+        # corpus, so toggling GYM_MAX_CORPUS_DOCS must not silently reuse queries
+        # built at a different cap. Appended only when a cap is set, so uncapped
+        # runs keep their existing cache keys unchanged.
+        cap = int(os.environ.get("GYM_MAX_CORPUS_DOCS", 0) or 0)
+        if cap:
+            key += f"|cap={cap}"
         return hashlib.sha256(key.encode()).hexdigest()[:8]
 
     def _queries_path(self) -> Path:
@@ -149,9 +198,23 @@ class Gym:
         path = self._queries_path()
         if path.exists():
             data = json.loads(path.read_text())
-            return [Query(**q) for q in data]
+            if data:
+                return [Query(**q) for q in data]
+            # An empty query cache is a crash artifact (e.g. generation ran
+            # against a dead generator and every call failed): treat it as a
+            # miss and regenerate, never trust it.
+            logger.warning("empty query cache at %s -- regenerating", path)
+            path.unlink()
         gen = QueryGenerator(self.gen_client, self.cfg)
         queries = gen.run(corpus)
+        if not queries:
+            # Never persist or proceed with zero queries: downstream this
+            # surfaces as an opaque size-0 IndexError inside the encoder
+            # dataloader. A dead generator endpoint must fail loudly here.
+            raise RuntimeError(
+                f"query generation returned 0 retained queries for "
+                f"{self.cfg.task_name}: the generator endpoint is likely dead "
+                "or the filter rejected everything. Not writing a cache file.")
         path.write_text(json.dumps([asdict(q) for q in queries], indent=2))
         return queries
 
@@ -161,11 +224,38 @@ class Gym:
             return self._retr_cache[model_name]
         if model_name == "bm25":
             retr = BM25Retriever(top_k=self.cfg.top_k).retrieve(corpus, queries)
+        # ColBERT (late interaction) and SPLADE (learned sparse) are additive,
+        # non-dense entrants that go through their own retrievers instead of the
+        # dense matmul harness. Matched by name so callers just pass "colbert".
+        elif model_name == "colbert" or model_name.startswith("colbert"):
+            retr = ColBERTRetriever(top_k=self.cfg.top_k).retrieve(corpus, queries)
+        elif "splade" in model_name:
+            # Learned-sparse (SPLADE) entrants are not implemented: baselines.py
+            # ships BM25Retriever and ColBERTRetriever only. Fail fast with a clear
+            # message instead of crashing the whole tournament with an ImportError
+            # on a missing class. To add one, implement gym.baselines.SPLADERetriever
+            # duck-typed like BM25Retriever (.model_name + .retrieve(corpus, queries)).
+            raise NotImplementedError(
+                f"SPLADE retriever not implemented (model={model_name!r}); "
+                "remove it from the roster or implement gym.baselines.SPLADERetriever")
         else:
             enc = make_encoder(model_name, task_name=self.cfg.task_name,
                                split=self.cfg.corpus_split,
+                               subset=getattr(self, "_corpus_subset", "default"),
                                use_mteb=self.cfg.use_mteb_models)
             retr = self.harness.retrieve(enc, corpus, queries)
+            # Free this model's GPU memory before the next encoder loads. Only the
+            # Retrieved lists (CPU) live in _retr_cache, so the encoder is safe to drop.
+            # Without this, 7B-class encoders accumulate on one GPU and OOM mid-
+            # tournament (observed on NFCorpus/FiQA at the 25-model roster, 2026-07-07).
+            del enc
+            try:
+                import gc as _gc, torch as _torch
+                _gc.collect()
+                if _torch.cuda.is_available():
+                    _torch.cuda.empty_cache()
+            except Exception:
+                pass
         self._retr_cache[model_name] = retr
         return retr
 
@@ -182,6 +272,13 @@ class Gym:
         prompt_sig = hashlib.sha256(_JUDGE_SYSTEM.encode()).hexdigest()[:8]
         qsig = "||".join(f"{q.qid}:{q.text}" for q in queries)
         key = f"{judge_id}|{prompt_sig}|{self.cfg.top_k}|{self.cfg.flip_positions}|{qsig}"
+        # Same cap guard as the query hash: a different corpus cap changes the
+        # retrievals behind every verdict. Conditional so uncapped caches are
+        # untouched. (qsig already shifts when the cap changes the query set,
+        # but keying on the cap directly makes the dependency explicit.)
+        cap = int(os.environ.get("GYM_MAX_CORPUS_DOCS", 0) or 0)
+        if cap:
+            key += f"|cap={cap}"
         return hashlib.sha256(key.encode()).hexdigest()[:8]
 
     def _matchup_path(self, a, b, queries) -> Path:
@@ -256,7 +353,9 @@ class Gym:
             # position bias recomputed from the persisted verdicts, so cached
             # and resumed runs report the true rate
             "a_first_rate": _a_first_rate_from(all_verdicts),
-            "parse_failure_rate": self.judge.parse_failure_rate,
+            # recomputed from persisted per-order flags so cached/resumed runs
+            # report the true rate, not the in-process counter (mirrors a_first_rate)
+            "parse_failure_rate": _parse_failure_rate_from(all_verdicts),
             "models": [
                 {"name": m.name, "rating": m.rating, "ci_low": m.ci_low,
                  "ci_high": m.ci_high, "wins": m.wins, "losses": m.losses,

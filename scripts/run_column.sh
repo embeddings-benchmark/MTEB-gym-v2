@@ -40,7 +40,7 @@ OUTPUT_ROOT="${OUTPUT_ROOT:-results/ablation}"
 DEFAULT_TASKS="NanoNFCorpusRetrieval NanoFiQA2018Retrieval NanoSciFactRetrieval \
 NanoArguAnaRetrieval NanoSCIDOCSRetrieval NanoTouche2020Retrieval \
 NanoQuoraRetrieval NanoDBPediaRetrieval NanoHotpotQARetrieval \
-NanoFEVERRetrieval NanoClimateFEVERRetrieval NanoNQRetrieval NanoMSMARCORetrieval"
+NanoFEVERRetrieval NanoClimateFeverRetrieval NanoNQRetrieval NanoMSMARCORetrieval"
 read -r -a TASK_LIST <<< "${TASKS:-$DEFAULT_TASKS}"
 
 # Fail fast if any task name doesn't exist in this mteb version.
@@ -72,15 +72,28 @@ fi
 for task in "${TASK_LIST[@]}"; do
     out="$OUTPUT_ROOT/$TAG/$task"
     echo "=== $TAG / $task -> $out ==="
-    PYTHONPATH=. python3 scripts/tournament.py \
-        --judge qwen3 \
-        --model "$JUDGE_MODEL" \
-        --base-url "$JUDGE_URL" \
-        --task "$task" \
-        --n-queries "$N_QUERIES" \
-        --workers "$WORKERS" \
-        --output "$out" \
-        "${MODEL_ARGS[@]}" "${GEN_ARGS[@]}" "${KEY_ARGS[@]}"
+    # A transient connection blip to the shared judge/gen server can exhaust
+    # the client's own retries and kill the whole element even though verdicts
+    # are cached per-pair (resume-safe). Retry the task itself a few times
+    # before giving up, so one bad minute doesn't cost a full resubmit cycle.
+    ok=0
+    for attempt in 1 2 3; do
+        if PYTHONPATH=. python3 scripts/tournament.py \
+            --judge qwen3 \
+            --model "$JUDGE_MODEL" \
+            --base-url "$JUDGE_URL" \
+            --task "$task" \
+            --n-queries "$N_QUERIES" \
+            --workers "$WORKERS" \
+            --output "$out" \
+            "${MODEL_ARGS[@]}" "${GEN_ARGS[@]}" "${KEY_ARGS[@]}"; then
+            ok=1
+            break
+        fi
+        echo "[WARN] $task attempt $attempt/3 failed; retrying in 60s"
+        sleep 60
+    done
+    [ "$ok" = 1 ] || { echo "[FATAL] $task failed after 3 attempts"; exit 1; }
 done
 
 echo "column '$TAG' complete -> $OUTPUT_ROOT/$TAG/"

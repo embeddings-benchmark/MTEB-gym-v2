@@ -57,16 +57,43 @@ _RESULTS_RAW = "https://raw.githubusercontent.com/embeddings-benchmark/results/m
 def fetch_truth(models: list[str], task: str = "NFCorpus",
                 split: str = "test") -> dict[str, float]:
     """Pull official nDCG@10 for `models` from the embeddings-benchmark/results repo."""
+    import os
+    import time
+    import urllib.error
     import urllib.request
 
     def _get_json(url):
-        with urllib.request.urlopen(url, timeout=30) as r:
-            return json.load(r)
+        req = urllib.request.Request(url)
+        # unauthenticated api.github.com allows only 60 req/h — far too few for
+        # a full column (13 tasks x 25 models). raw.githubusercontent.com has
+        # its own (undocumented, stricter) anonymous per-IP limit and also
+        # accepts the token. Any classic PAT (no scopes) works for both.
+        tok = os.environ.get("GITHUB_TOKEN")
+        if tok:
+            req.add_header("Authorization", f"Bearer {tok}")
+        for attempt in range(5):
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    return json.load(r)
+            except urllib.error.HTTPError as e:
+                # GitHub signals both primary (403, X-RateLimit-Remaining: 0)
+                # and secondary (403 or 429, often with Retry-After) limits —
+                # treat both as retryable with real backoff, not just 429.
+                if e.code in (403, 429) and attempt < 4:
+                    wait = int(e.headers.get("Retry-After") or e.headers.get("X-RateLimit-Reset") or 0)
+                    if wait > 1_000_000_000:  # epoch seconds -> delta
+                        wait = max(wait - int(time.time()), 0)
+                    wait = wait or (2 ** attempt * 20)
+                    print(f"  rate limited ({e.code}); waiting {wait}s")
+                    time.sleep(min(wait, 300))
+                    continue
+                raise
 
     out: dict[str, float] = {}
     for model in models:
         if "/" not in model:        # bm25 etc. have no results-repo entry
             continue
+        time.sleep(0.3)             # keep the sustained rate well under any 429 threshold
         slug = model.replace("/", "__")
         try:
             revisions = [e["name"] for e in _get_json(f"{_RESULTS_API}/{slug}")

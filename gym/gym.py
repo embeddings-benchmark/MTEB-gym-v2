@@ -96,7 +96,8 @@ class Gym:
         self.judge_client = judge_client
         self.gen_client = gen_client or judge_client
         self.harness = RetrievalHarness(cfg.cache_dir, top_k=cfg.top_k)
-        self.judge = Judge(judge_client, flip_positions=cfg.flip_positions,
+        self.judge = Judge(judge_client, task_name=cfg.task_name,
+                           flip_positions=cfg.flip_positions,
                            note=cfg.judge_batch_note, workers=cfg.judge_workers)
         self._retr_cache: dict[str, list] = {}
         self.leaderboard_str = ""
@@ -269,7 +270,12 @@ class Gym:
         """
         from .judge import _JUDGE_SYSTEM
         judge_id = getattr(self.judge_client, "model", type(self.judge_client).__name__)
-        prompt_sig = hashlib.sha256(_JUDGE_SYSTEM.encode()).hexdigest()[:8]
+        from .judge import REGISTRY_VERSION
+        # hash the judge's RESOLVED system prompt (per-task instruction included)
+        # a task with a registry instruction hashes differently; generic tasks hash
+        # byte-identically to before, so all existing verdict caches are preserved.
+        prompt_sig = hashlib.sha256(
+            self.judge.system.encode()).hexdigest()[:8]
         qsig = "||".join(f"{q.qid}:{q.text}" for q in queries)
         key = f"{judge_id}|{prompt_sig}|{self.cfg.top_k}|{self.cfg.flip_positions}|{qsig}"
         # Same cap guard as the query hash: a different corpus cap changes the

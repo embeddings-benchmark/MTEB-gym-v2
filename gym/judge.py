@@ -47,6 +47,42 @@ _JUDGE_SYSTEM = (
     "\"confidence\": \"low\"|\"medium\"|\"high\", \"reasoning\": \"one sentence\"}"
 )
 
+# ---------------------------------------------------------------- task registry
+# Per-task judge instructions, copied VERBATIM from mteb TaskMetadata.prompt
+# (pre-registered; provenance recorded per entry). An absent entry means the
+# generic relevance criterion applies and judge_system() returns _JUDGE_SYSTEM
+# byte-for-byte, so existing verdict caches are untouched. Entries are frozen
+# before any judged run; any edit bumps REGISTRY_VERSION (which participates in
+# the verdict-cache signature) and requires a new pre-registration.
+REGISTRY_VERSION = 1
+_TASK_INSTRUCTIONS: dict[str, str] = {
+    # source: mteb TaskMetadata.prompt for ArguAna, pinned mteb 2.15.1
+    "ArguAna": "Given a claim, find documents that refute the claim.",
+}
+
+
+def judge_system(task_name: str | None = None) -> str:
+    """Generic judge prompt, with the dataset's own task instruction injected
+    when the registry has one. The injected line replaces only the criterion
+    clause's referent ("satisfies the query") context by prefacing the task
+    definition; all other wording is identical to the generic prompt."""
+    instr = _TASK_INSTRUCTIONS.get(task_name or "")
+    if not instr:
+        return _JUDGE_SYSTEM
+    return (
+        "You compare two retrieval systems. The retrieval task is: "
+        + instr.rstrip(".") + ". "
+        "Given a query and two ranked result sets "
+        "(System A and System B), decide which set better satisfies this task for "
+        "the query, judging task fit, coverage of the information need, and ranking "
+        "quality. Be decisive "
+        "when one set is clearly better; only answer 'tie' when they are genuinely "
+        "indistinguishable in usefulness. "
+        "Reply with strict JSON: {\"winner\": \"A\"|\"B\"|\"tie\", "
+        "\"confidence\": \"low\"|\"medium\"|\"high\", \"reasoning\": \"one sentence\"}"
+    )
+
+
 _OUTCOME = {"A": 1.0, "tie": 0.5, "B": 0.0}
 
 
@@ -100,7 +136,8 @@ def _parse_response(raw: str) -> tuple[str, str, bool]:
 
 class Judge:
     def __init__(self, client, flip_positions: bool = True, note: str = "",
-                 workers: int = 1):
+                 workers: int = 1, task_name: str | None = None):
+        self.system = judge_system(task_name)
         self.client = client
         self.flip = flip_positions
         self.note = note
@@ -122,7 +159,7 @@ class Judge:
         flatten the leaderboard the way v0.1's hard ties did.
         """
         msg = [
-            {"role": "system", "content": _JUDGE_SYSTEM},
+            {"role": "system", "content": self.system},
             {"role": "user", "content":
                 f"Query: {query}\n\nSystem A results:\n{_format_results(first)}\n\n"
                 f"System B results:\n{_format_results(second)}\n\nReply as JSON."},

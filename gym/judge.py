@@ -234,7 +234,8 @@ class Judge:
             parsed_ok=parsed,
         )
 
-    def _early_failure_guard(self, n_done: int, n_failed: int) -> None:
+    def _early_failure_guard(self, n_done: int, n_failed: int,
+                             n_identical: int = 0) -> None:
         """Abort loudly when the judge endpoint is effectively dead.
 
         A dead endpoint / bad API key makes every verdict a parse-failure tie;
@@ -256,6 +257,28 @@ class Judge:
                 f"verdicts (> {max_rate:.0%}): the judge endpoint is likely dead "
                 "or the API key invalid. Aborting instead of silently scoring "
                 "ties. Set GYM_MAX_EARLY_PARSE_FAIL=1.0 to override.")
+        # A structurally distinct failure the rate above is blind to: the judge is
+        # never CALLED because every pair's retrieved lists are byte-identical, so
+        # there are no parse failures to count. Observed on CUREv1, whose corpus
+        # loaded as 11 empty documents (a multi-subset dataset whose subset names
+        # were read as documents): 21k/21k identical-list ties, every model left on
+        # the default rating, Spearman nan, parse-failure rate 0.0.
+        # Genuine judge ties carry parsed_ok entries; identical-list short-circuits
+        # carry raw == ["identical"] with an empty parsed_ok, so the two are cleanly
+        # separable and this cannot fire on a merely tie-heavy corpus (our real ones
+        # sit at 0.26-0.66 ties). A high rate here always means degenerate
+        # retrieval: an empty or mis-loaded corpus, or a corpus no larger than
+        # top_k, where every model necessarily returns the same set.
+        max_ident = float(os.environ.get("GYM_MAX_EARLY_IDENTICAL", "0.95"))
+        irate = n_identical / max(n_done, 1)
+        if irate > max_ident:
+            raise RuntimeError(
+                f"{irate:.0%} of the first {n_done} pairs had byte-identical "
+                f"retrieved lists (over {max_ident:.0%}), so the judge was never "
+                "called and every verdict is a tie. The corpus is almost certainly "
+                "empty, mis-loaded, or smaller than top_k; check the corpus loader "
+                "for this task before spending judge budget. Set "
+                "GYM_MAX_EARLY_IDENTICAL=1.0 to override.")
 
     def judge_all(self, retr_a: list, retr_b: list, model_a: str, model_b: str,
                   on_verdict=None) -> list[Verdict]:
@@ -267,7 +290,7 @@ class Judge:
 
         import threading
         _efg_lock = threading.Lock()
-        _efg = {"done": 0, "failed": 0}
+        _efg = {"done": 0, "failed": 0, "identical": 0}
 
         def _one(pair):
             ra, rb = pair
@@ -275,11 +298,15 @@ class Judge:
             # early dead-endpoint guard: a verdict whose every judge call failed
             # to parse (parsed_ok all-False; empty = no call made, not a failure)
             failed = bool(getattr(v, "parsed_ok", None)) and not any(v.parsed_ok)
+            identical = list(getattr(v, "raw", []) or []) == ["identical"]
             with _efg_lock:
                 _efg["done"] += 1
                 if failed:
                     _efg["failed"] += 1
-                self._early_failure_guard(_efg["done"], _efg["failed"])
+                if identical:
+                    _efg["identical"] += 1
+                self._early_failure_guard(_efg["done"], _efg["failed"],
+                                          _efg["identical"])
             if on_verdict is not None:
                 on_verdict(v)
             return v

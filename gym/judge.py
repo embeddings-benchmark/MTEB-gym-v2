@@ -25,6 +25,7 @@ the score; the metric just lets you see how bad it is for a given judge.
 """
 
 from __future__ import annotations
+import os
 
 import json
 import logging
@@ -66,7 +67,16 @@ def judge_system(task_name: str | None = None) -> str:
     when the registry has one. The injected line replaces only the criterion
     clause's referent ("satisfies the query") context by prefacing the task
     definition; all other wording is identical to the generic prompt."""
-    instr = _TASK_INSTRUCTIONS.get(task_name or "")
+    # CONTROL-ARM MECHANISM (pre-registered as disclosed control arms, not the
+    # confirmatory condition). When GYM_JUDGE_INSTR_OVERRIDE is set, its text is
+    # used as the task instruction for whatever task is being judged. This exists
+    # so the placebo arm (instruction-shaped but wrong-task text) and the
+    # cross-corpus negative control (ArguAna's instruction injected into a healthy
+    # corpus) can run WITHOUT editing the frozen registry or the generic prompt.
+    # Unset -> behaviour is byte-identical to REGISTRY_VERSION 1. The verdict-cache
+    # signature in gym.py hashes the RESOLVED prompt, so an override automatically
+    # gets its own cache namespace and can never collide with a real result.
+    instr = os.environ.get("GYM_JUDGE_INSTR_OVERRIDE") or _TASK_INSTRUCTIONS.get(task_name or "")
     if not instr:
         return _JUDGE_SYSTEM
     return (

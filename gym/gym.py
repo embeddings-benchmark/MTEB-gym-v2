@@ -139,6 +139,22 @@ class Gym:
         legacy = getattr(task, "corpus", None)
         if legacy:                                         # mteb 1.x
             corpus = legacy.get(self.cfg.corpus_split) or legacy[next(iter(legacy))]
+            # Multilingual / multi-domain 1.x tasks (e.g. CUREv1) nest one level
+            # deeper: corpus[lang] -> {subset_name: {doc_id: doc}}. Iterating that
+            # directly turns subset NAMES into doc ids (CUREv1 loaded as 11
+            # repr-text "docs" and every retrieval tied). Detect the extra level
+            # (first value is itself a mapping of docs, not a doc) and descend,
+            # preferring the 'all' union, then the split name, else merging.
+            def _is_doc(x):
+                return isinstance(x, str) or (isinstance(x, dict) and ("text" in x or "title" in x))
+            if isinstance(corpus, dict) and corpus and not _is_doc(next(iter(corpus.values()))):
+                inner = corpus.get("all") or corpus.get(self.cfg.corpus_split)
+                if inner is None:
+                    inner = {}
+                    for _sub in corpus.values():
+                        if isinstance(_sub, dict):
+                            inner.update(_sub)
+                corpus = inner
             out: dict[str, str] = {}
             for did, doc in corpus.items():
                 if isinstance(doc, dict):                  # {title, text}

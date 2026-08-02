@@ -179,12 +179,39 @@ class Gym:
         subset = subsets[subset_key]
         split_data = subset.get(self.cfg.corpus_split) or subset[next(iter(subset))]
         corpus_ds = split_data["corpus"]
+        _inject = os.environ.get("GYM_INJECT_QRELS_DOCS")
         if _cap and len(corpus_ds) > _cap:                 # RAM-safe: never materialize the full giant corpus
-            corpus_ds = corpus_ds.shuffle(seed=self.cfg.seed).select(range(_cap))
-        return {
+            capped = corpus_ds.shuffle(seed=self.cfg.seed).select(range(_cap))
+        else:
+            capped = corpus_ds
+        out = {
             row["id"]: ((row.get("title") or "") + " " + (row.get("text") or "")).strip()
-            for row in corpus_ds
+            for row in capped
         }
+        # Human-query anchoring on a capped giant corpus is meaningless unless the
+        # qrels-judged documents are present: a random 100k of 5.4M docs almost
+        # never contains a real query's golds, every model scores 0, and
+        # obj_decisive collapses to 0 (observed on ClimateFEVER). When
+        # GYM_INJECT_QRELS_DOCS is set (value = split), stream the full corpus
+        # once and add every judged doc for that split. Synthetic-query runs
+        # leave this unset and are byte-identical to before. MUST be set
+        # identically for preembed and judging so cache keys line up.
+        if _cap and _inject:
+            rel = task.dataset[subset_key].get(_inject) or task.dataset[subset_key][next(iter(task.dataset[subset_key]))]
+            need = set()
+            for docs in rel["relevant_docs"].values():
+                need.update(docs.keys())
+            need -= set(out)
+            if need:
+                added = 0
+                for row in corpus_ds:
+                    if row["id"] in need:
+                        out[row["id"]] = ((row.get("title") or "") + " " + (row.get("text") or "")).strip()
+                        added += 1
+                        if added == len(need):
+                            break
+                print(f"[load_corpus] injected {added}/{len(need)} qrels-judged docs into capped corpus")
+        return out
 
     # --------------------------------------------------------------- queries
     def _query_config_hash(self) -> str:

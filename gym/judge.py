@@ -57,8 +57,17 @@ _JUDGE_SYSTEM = (
 # the verdict-cache signature) and requires a new pre-registration.
 REGISTRY_VERSION = 1
 _TASK_INSTRUCTIONS: dict[str, str] = {
-    # source: mteb TaskMetadata.prompt for ArguAna, pinned mteb 2.15.1
+    # source: mteb TaskMetadata.prompt, pinned mteb 2.15.1, all verbatim.
+    # Batch 2 (FEVER..FiQA2018) frozen 2026-07-29 BEFORE any judged run against
+    # them; expectations recorded in docs/ai/TASK_PLAN_2026-07-29_master.md W3.
     "ArguAna": "Given a claim, find documents that refute the claim.",
+    "FEVER": "Given a claim, retrieve documents that support or refute the claim",
+    "ClimateFEVER": "Given a claim about climate change, retrieve documents that support or refute the claim",
+    "Touche2020": "Given a question, retrieve detailed and persuasive arguments that answer the question",
+    "HotpotQA": "Given a multi-hop question, retrieve documents that can help answer the question",
+    "NFCorpus": "Given a question, retrieve relevant documents that best answer the question",
+    "SciFact": "Given a scientific claim, retrieve documents that support or refute the claim",
+    "FiQA2018": "Given a financial question, retrieve user replies that best answer the question",
 }
 
 

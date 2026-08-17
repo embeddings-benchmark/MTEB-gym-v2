@@ -311,6 +311,21 @@ def test_matchup_resume_from_jsonl(tmp_dir="results/_test_resume"):
     print("  matchup JSONL resume ok (resume judged only the missing queries)")
 
 
+def test_repro_helpers():
+    from gym.repro import canonical_config, config_hash, git_revision
+
+    a = {"task": "NFCorpus", "n_queries": 300, "seed": 0}
+    b = {"seed": 0, "n_queries": 300, "task": "NFCorpus"}
+
+    assert canonical_config(a) == canonical_config(b)
+    assert config_hash(a) == config_hash(b)
+    assert len(config_hash(a)) == 8
+
+    rev = git_revision()
+    assert rev is None or len(rev) == 40
+    print("  reproducibility helpers ok")
+
+
 if __name__ == "__main__":
     print("Running MTEB Gym smoke tests...\n")
     test_json_extraction()
@@ -330,4 +345,5 @@ if __name__ == "__main__":
     test_winless_model_ranks_last()
     test_corpus_fingerprint_content_sensitive()
     test_matchup_resume_from_jsonl()
+    test_repro_helpers()
     print("\nAll smoke tests passed.")

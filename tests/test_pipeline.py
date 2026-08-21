@@ -354,6 +354,54 @@ def test_result_helpers():
     print("  standardized result helpers ok")
 
 
+
+def test_corpus_control_resolution():
+    import os
+
+    from gym.config import GymConfig
+    from gym.gym import Gym
+
+    old_cap = os.environ.get("GYM_MAX_CORPUS_DOCS")
+    old_inject = os.environ.get("GYM_INJECT_QRELS_DOCS")
+
+    gym = object.__new__(Gym)
+
+    try:
+        # Legacy behavior: environment variables still resolve when config is None.
+        os.environ["GYM_MAX_CORPUS_DOCS"] = "123"
+        os.environ["GYM_INJECT_QRELS_DOCS"] = "test"
+        gym.cfg = GymConfig()
+
+        assert gym._corpus_cap() == 123
+        assert gym._inject_qrels_docs() == "test"
+
+        # Explicit config must take precedence over the legacy environment.
+        gym.cfg = GymConfig(corpus_cap=456, inject_qrels_docs="dev")
+
+        assert gym._corpus_cap() == 456
+        assert gym._inject_qrels_docs() == "dev"
+
+        # Injection must participate in cache identity when a cap is active.
+        gym.gen_client = type("Client", (), {"model": "generator"})()
+        hash_dev = gym._query_config_hash()
+        gym.cfg.inject_qrels_docs = "test"
+        hash_test = gym._query_config_hash()
+        assert hash_dev != hash_test
+
+    finally:
+        if old_cap is None:
+            os.environ.pop("GYM_MAX_CORPUS_DOCS", None)
+        else:
+            os.environ["GYM_MAX_CORPUS_DOCS"] = old_cap
+
+        if old_inject is None:
+            os.environ.pop("GYM_INJECT_QRELS_DOCS", None)
+        else:
+            os.environ["GYM_INJECT_QRELS_DOCS"] = old_inject
+
+    print("  corpus control resolution ok")
+
+
 if __name__ == "__main__":
     print("Running MTEB Gym smoke tests...\n")
     test_json_extraction()
@@ -375,4 +423,5 @@ if __name__ == "__main__":
     test_matchup_resume_from_jsonl()
     test_repro_helpers()
     test_result_helpers()
+    test_corpus_control_resolution()
     print("\nAll smoke tests passed.")

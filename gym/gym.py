@@ -118,6 +118,19 @@ class Gym:
             )
 
     # --------------------------------------------------------------- corpus
+    def _corpus_cap(self) -> int | None:
+        """Resolve corpus cap while preserving legacy environment behavior."""
+        if self.cfg.corpus_cap is not None:
+            return self.cfg.corpus_cap
+        raw = os.environ.get("GYM_MAX_CORPUS_DOCS")
+        return int(raw) if raw else None
+
+    def _inject_qrels_docs(self) -> str | None:
+        """Resolve qrels-injection split while preserving legacy env behavior."""
+        if self.cfg.inject_qrels_docs is not None:
+            return self.cfg.inject_qrels_docs
+        return os.environ.get("GYM_INJECT_QRELS_DOCS")
+
     def load_corpus(self) -> dict[str, str]:
         """Load an MTEB task corpus as {doc_id: 'title text'}.
 
@@ -133,8 +146,7 @@ class Gym:
         # fit on one GPU. Seeded by cfg.seed for reproducibility. The gym generates its own queries
         # from whatever corpus this returns, so a seeded subsample is self-consistent; validation vs
         # the full-corpus official nDCG@10 anchor is an approximation, reported as a subsampled arm.
-        _cap = os.environ.get("GYM_MAX_CORPUS_DOCS")
-        _cap = int(_cap) if _cap else None
+        _cap = self._corpus_cap()
 
         legacy = getattr(task, "corpus", None)
         if legacy:                                         # mteb 1.x
@@ -179,7 +191,7 @@ class Gym:
         subset = subsets[subset_key]
         split_data = subset.get(self.cfg.corpus_split) or subset[next(iter(subset))]
         corpus_ds = split_data["corpus"]
-        _inject = os.environ.get("GYM_INJECT_QRELS_DOCS")
+        _inject = self._inject_qrels_docs()
         if _cap and len(corpus_ds) > _cap:                 # RAM-safe: never materialize the full giant corpus
             capped = corpus_ds.shuffle(seed=self.cfg.seed).select(range(_cap))
         else:
@@ -229,9 +241,12 @@ class Gym:
         # corpus, so toggling GYM_MAX_CORPUS_DOCS must not silently reuse queries
         # built at a different cap. Appended only when a cap is set, so uncapped
         # runs keep their existing cache keys unchanged.
-        cap = int(os.environ.get("GYM_MAX_CORPUS_DOCS", 0) or 0)
+        cap = self._corpus_cap()
         if cap:
             key += f"|cap={cap}"
+            inject = self._inject_qrels_docs()
+            if inject:
+                key += f"|inject_qrels={inject}"
         return hashlib.sha256(key.encode()).hexdigest()[:8]
 
     def _queries_path(self) -> Path:
@@ -325,9 +340,12 @@ class Gym:
         # retrievals behind every verdict. Conditional so uncapped caches are
         # untouched. (qsig already shifts when the cap changes the query set,
         # but keying on the cap directly makes the dependency explicit.)
-        cap = int(os.environ.get("GYM_MAX_CORPUS_DOCS", 0) or 0)
+        cap = self._corpus_cap()
         if cap:
             key += f"|cap={cap}"
+            inject = self._inject_qrels_docs()
+            if inject:
+                key += f"|inject_qrels={inject}"
         return hashlib.sha256(key.encode()).hexdigest()[:8]
 
     def _matchup_path(self, a, b, queries) -> Path:

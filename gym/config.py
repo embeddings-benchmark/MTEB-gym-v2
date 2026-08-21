@@ -11,6 +11,10 @@ class GymConfig:
     # --- corpus / task ---
     task_name: str = "NFCorpus"
     corpus_split: str = "test"
+    # Explicit experiment-defining corpus controls. None preserves the legacy
+    # environment-variable behavior until Gym resolves them at runtime.
+    corpus_cap: int | None = None
+    inject_qrels_docs: str | None = None
 
     # --- query generation ---
     n_queries: int = 100          # target number of *kept* queries after filtering

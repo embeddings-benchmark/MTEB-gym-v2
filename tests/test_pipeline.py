@@ -326,6 +326,34 @@ def test_repro_helpers():
     print("  reproducibility helpers ok")
 
 
+
+def test_result_helpers():
+    from gym.results import result_directory, runtime_versions
+
+    cfg = {
+        "task_name": "NFCorpus",
+        "n_queries": 300,
+        "top_k": 10,
+        "seed": 0,
+    }
+
+    versions = runtime_versions()
+    assert "mteb_version" in versions
+    assert "gym_version" in versions
+    assert "gym_revision" in versions
+
+    path = result_directory(
+        "results",
+        "Qwen/Qwen3.6-27B",
+        "MiniMaxAI/MiniMax-M2.7",
+        cfg,
+    )
+    assert str(path) == (
+        "results/Qwen-Qwen3.6-27B__MiniMaxAI-MiniMax-M2.7/45a0e48a"
+    )
+    print("  standardized result helpers ok")
+
+
 if __name__ == "__main__":
     print("Running MTEB Gym smoke tests...\n")
     test_json_extraction()
@@ -346,4 +374,5 @@ if __name__ == "__main__":
     test_corpus_fingerprint_content_sensitive()
     test_matchup_resume_from_jsonl()
     test_repro_helpers()
+    test_result_helpers()
     print("\nAll smoke tests passed.")

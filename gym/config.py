@@ -11,6 +11,7 @@ class GymConfig:
     # --- corpus / task ---
     task_name: str = "NFCorpus"
     corpus_split: str = "test"
+    arm: str = "synthetic"
     # Explicit experiment-defining corpus controls. None preserves the legacy
     # environment-variable behavior until Gym resolves them at runtime.
     corpus_cap: int | None = None

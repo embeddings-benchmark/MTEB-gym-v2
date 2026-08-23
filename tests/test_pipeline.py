@@ -328,7 +328,14 @@ def test_repro_helpers():
 
 
 def test_result_helpers():
-    from gym.results import result_directory, runtime_versions
+    import json
+    import tempfile
+
+    from gym.results import (
+        experiment_config_hash,
+        result_directory,
+        runtime_versions,
+    )
 
     cfg = {
         "task_name": "NFCorpus",
@@ -342,17 +349,53 @@ def test_result_helpers():
     assert "gym_version" in versions
     assert "gym_revision" in versions
 
-    path = result_directory(
+    # Legacy/default synthetic arm keeps the established path.
+    synthetic_path = result_directory(
         "results",
         "Qwen/Qwen3.6-27B",
         "MiniMaxAI/MiniMax-M2.7",
         cfg,
     )
-    assert str(path) == (
+    assert str(synthetic_path) == (
         "results/Qwen-Qwen3.6-27B__MiniMaxAI-MiniMax-M2.7/45a0e48a"
     )
-    print("  standardized result helpers ok")
 
+    # Human-query runs get an explicit human-queries arm.
+    human_cfg = {**cfg, "arm": "human"}
+    human_path = result_directory(
+        "results",
+        "Qwen/Qwen3.6-27B",
+        None,
+        human_cfg,
+    )
+    assert human_path.parent.name == "Qwen-Qwen3.6-27B__human-queries"
+    assert human_path.name == experiment_config_hash(human_cfg)
+
+    # Serializing config_hash must not alter the underlying experiment hash.
+    hashed_cfg = dict(human_cfg)
+    hashed_cfg["config_hash"] = experiment_config_hash(hashed_cfg)
+    assert experiment_config_hash(hashed_cfg) == hashed_cfg["config_hash"]
+
+    # A task result lands at <arm>/<config-hash>/<task>.json.
+    with tempfile.TemporaryDirectory() as tmp:
+        out_dir = result_directory(
+            tmp,
+            "Qwen/Qwen3.6-27B",
+            "MiniMaxAI/MiniMax-M2.7",
+            cfg,
+        )
+        out_dir.mkdir(parents=True, exist_ok=True)
+        result_path = out_dir / "NFCorpus.json"
+        result_path.write_text(json.dumps({
+            "task_name": "NFCorpus",
+            "config": cfg,
+        }))
+
+        assert result_path.exists()
+        assert json.loads(result_path.read_text())["task_name"] == "NFCorpus"
+        assert result_path.parent.name == experiment_config_hash(cfg)
+
+    print("  standardized result helpers ok")
 
 
 def test_corpus_control_resolution():

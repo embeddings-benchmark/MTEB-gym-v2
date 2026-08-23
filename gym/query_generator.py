@@ -84,6 +84,9 @@ class QueryGenerator:
         self.client = client
         self.cfg = cfg
         self.rng = random.Random(cfg.seed)
+        # Number of successfully generated, heuristic-valid queries before
+        # quality filtering/dedup. Used only for reproducibility metadata.
+        self.last_generated_count: int | None = None
 
     # ---------------------------------------------------------------- generate
     def _one(self, doc_ids: list[str], docs: dict[str, str], idx: int) -> Query | None:
@@ -215,5 +218,6 @@ class QueryGenerator:
     # ------------------------------------------------------------------ public
     def run(self, corpus: dict[str, str]) -> list[Query]:
         raw = self.generate(corpus)
+        self.last_generated_count = len(raw)
         kept = self.filter(raw)
         return kept

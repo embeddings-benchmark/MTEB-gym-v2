@@ -104,6 +104,9 @@ class Gym:
         # Resolved in load_corpus for mteb 2.x multi-subset tasks so the encoder
         # is told the same hf_subset the corpus was actually read from (#9).
         self._corpus_subset = "default"
+        # Exact pre-filter generated-query count for result provenance.
+        # None for legacy query caches that predate the metadata sidecar.
+        self._n_queries_generated: int | None = None
 
         # Self-preference bias tracks the judge's own perplexity over the text
         # it rates (Wataoka et al. 2024), so LLM-generated queries should not
@@ -253,11 +256,20 @@ class Gym:
         return self.cfg.output_dir / (
             f"queries_{self.cfg.task_name}_{self._query_config_hash()}.json")
 
+    def _queries_meta_path(self) -> Path:
+        """Sidecar for query-generation metadata without changing cache format."""
+        return self._queries_path().with_suffix(".meta.json")
+
     def get_queries(self, corpus: dict[str, str]) -> list[Query]:
         path = self._queries_path()
+        meta_path = self._queries_meta_path()
         if path.exists():
             data = json.loads(path.read_text())
             if data:
+                self._n_queries_generated = None
+                if meta_path.exists():
+                    meta = json.loads(meta_path.read_text())
+                    self._n_queries_generated = meta.get("n_queries_generated")
                 return [Query(**q) for q in data]
             # An empty query cache is a crash artifact (e.g. generation ran
             # against a dead generator and every call failed): treat it as a
@@ -275,6 +287,10 @@ class Gym:
                 f"{self.cfg.task_name}: the generator endpoint is likely dead "
                 "or the filter rejected everything. Not writing a cache file.")
         path.write_text(json.dumps([asdict(q) for q in queries], indent=2))
+        self._n_queries_generated = gen.last_generated_count
+        meta_path.write_text(json.dumps({
+            "n_queries_generated": self._n_queries_generated,
+        }, indent=2))
         return queries
 
     # --------------------------------------------------------------- retrieval
@@ -401,7 +417,16 @@ class Gym:
         return verdicts
 
     # --------------------------------------------------------------- tournament
-    def tournament(self, models: list[str], corpus, queries):
+    def tournament(
+        self,
+        models: list[str],
+        corpus,
+        queries,
+        *,
+        output_folder: str | Path | None = None,
+        run_started_at: float | None = None,
+    ):
+        started_at = time.time() if run_started_at is None else run_started_at
         pairs = list(itertools.combinations(models, 2))
         all_verdicts: list[Verdict] = []
         for i, (a, b) in enumerate(pairs, 1):
@@ -431,10 +456,58 @@ class Gym:
             ],
         }
         (self.cfg.output_dir / "leaderboard.json").write_text(json.dumps(out, indent=2))
+
+        # Additive MTEB-style result artifact. Existing caches and
+        # leaderboard.json remain unchanged for backwards compatibility.
+        from .results import build_result_record, result_directory
+
+        record, experiment_config = build_result_record(
+            cfg=self.cfg,
+            judge_client=self.judge_client,
+            generator_client=self.gen_client,
+            models=models,
+            ratings=ratings,
+            verdicts=all_verdicts,
+            n_queries_generated=self._n_queries_generated,
+            n_queries=len(queries),
+            hf_subset=getattr(self, "_corpus_subset", "default"),
+            evaluation_time=time.time() - started_at,
+            corpus_cap=self._corpus_cap(),
+            inject_qrels_docs=self._inject_qrels_docs(),
+            judge_system=self.judge.system,
+        )
+
+        results_root = (
+            Path(output_folder)
+            if output_folder is not None
+            else self.cfg.output_dir
+        )
+        result_dir = result_directory(
+            results_root,
+            experiment_config["judge_model"],
+            experiment_config["generator_model"],
+            experiment_config,
+        )
+        result_dir.mkdir(parents=True, exist_ok=True)
+        result_path = result_dir / f"{self.cfg.task_name}.json"
+        result_path.write_text(json.dumps(record, indent=2))
+        self.result_path = result_path
         return ratings
 
     # --------------------------------------------------------------- convenience
-    def run(self, models: list[str]):
+    def run(
+        self,
+        models: list[str],
+        *,
+        output_folder: str | Path | None = None,
+    ):
+        started_at = time.time()
         corpus = self.load_corpus()
         queries = self.get_queries(corpus)
-        return self.tournament(models, corpus, queries)
+        return self.tournament(
+            models,
+            corpus,
+            queries,
+            output_folder=output_folder,
+            run_started_at=started_at,
+        )

@@ -420,6 +420,61 @@ def test_unified_gym_api():
     print("  unified Gym API ok")
 
 
+
+def test_rank_agreement_api():
+    import json
+    import tempfile
+    from pathlib import Path
+
+    import gym.validate as gv
+
+    original_fetch = gv.fetch_truth
+    try:
+        gv.fetch_truth = lambda models, task="NFCorpus", split="test": {
+            "model_a": 30.0,
+            "model_b": 20.0,
+            "model_c": 10.0,
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result_path = Path(tmp) / "NFCorpus.json"
+            result_path.write_text(json.dumps({
+                "task_name": "NFCorpus",
+                "ratings": [
+                    {"model": "model_a", "rating": 1100},
+                    {"model": "model_b", "rating": 1000},
+                    {"model": "model_c", "rating": 900},
+                ],
+                "scores": {
+                    "test": [{
+                        "main_score": None,
+                        "spearman": None,
+                        "spearman_ci_low": None,
+                        "spearman_ci_high": None,
+                        "spearman_top10": None,
+                        "kendall": None,
+                        "kendall_ap": None,
+                        "p_permutation": None,
+                        "n_models": 3,
+                    }]
+                },
+            }))
+
+            out = gv.rank_agreement(result_path, bootstrap=100, seed=0)
+            updated = json.loads(result_path.read_text())
+            row = updated["scores"]["test"][0]
+
+            assert row["spearman"] == 1.0
+            assert row["kendall"] == 1.0
+            assert row["n_models"] == 3
+            assert row["p_permutation"] is not None
+            assert str(result_path) in out
+    finally:
+        gv.fetch_truth = original_fetch
+
+    print("  rank agreement API ok")
+
+
 def test_corpus_control_resolution():
     import os
 
@@ -489,5 +544,6 @@ if __name__ == "__main__":
     test_repro_helpers()
     test_result_helpers()
     test_unified_gym_api()
+    test_rank_agreement_api()
     test_corpus_control_resolution()
     print("\nAll smoke tests passed.")

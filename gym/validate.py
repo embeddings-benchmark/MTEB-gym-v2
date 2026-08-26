@@ -17,9 +17,83 @@ from pathlib import Path
 
 import numpy as np
 
+_RESULTS_API = "https://api.github.com/repos/embeddings-benchmark/results/contents/results"
+_RESULTS_RAW = "https://raw.githubusercontent.com/embeddings-benchmark/results/main/results"
+
+BM25_NDCG = {
+    "NFCorpus": 32.1,
+    "SciFact": 68.63,
+    "FiQA2018": 25.14,
+    "ArguAna": 49.29,
+}
+
+
+def fetch_truth(
+    models: list[str],
+    task: str = "NFCorpus",
+    split: str = "test",
+) -> dict[str, float]:
+    """Fetch official MTEB nDCG@10 scores for the requested models."""
+    import urllib.request
+
+    def _get_json(url: str):
+        with urllib.request.urlopen(url, timeout=30) as response:
+            return json.load(response)
+
+    out: dict[str, float] = {}
+
+    if "bm25" in models and task in BM25_NDCG:
+        out["bm25"] = BM25_NDCG[task]
+
+    for model in models:
+        if "/" not in model:
+            continue
+
+        slug = model.replace("/", "__")
+        try:
+            revisions = [
+                entry["name"]
+                for entry in _get_json(f"{_RESULTS_API}/{slug}")
+                if entry["name"] != "model_meta.json"
+            ]
+            revisions.sort(
+                key=lambda revision: (
+                    revision in ("external", "no_revision_available"),
+                    revision,
+                )
+            )
+
+            for revision in revisions:
+                try:
+                    data = _get_json(
+                        f"{_RESULTS_RAW}/{slug}/{revision}/{task}.json"
+                    )
+                    scores = data.get("scores", {})
+                    rows = (
+                        scores.get(split)
+                        or scores.get("test")
+                        or next(iter(scores.values()), None)
+                    )
+                    if not rows:
+                        continue
+
+                    out[model] = round(rows[0]["ndcg_at_10"] * 100, 2)
+                    break
+                except Exception:
+                    continue
+        except Exception:
+            continue
+
+    return out
+
 
 def _load_gym(path: str) -> dict[str, float]:
+    """Load ratings from either legacy leaderboard.json or standardized results."""
     data = json.loads(Path(path).read_text())
+
+    if "ratings" in data:
+        return {m["model"]: m["rating"] for m in data["ratings"]}
+
     return {m["name"]: m["rating"] for m in data["models"]}
 
 
@@ -89,6 +163,75 @@ def correlate(gym_ratings: dict[str, float],
         "gym_ranking": [m for m, _ in sorted(gym_ratings.items(), key=lambda x: -x[1]) if m in shared],
         "truth_ranking": [m for m, _ in sorted(ground_truth.items(), key=lambda x: -x[1]) if m in shared],
     }
+
+
+
+def rank_agreement(
+    results_dir: str | Path,
+    *,
+    bootstrap: int = 1000,
+    seed: int = 0,
+) -> dict[str, dict]:
+    """Compare standardized Gym rankings with official MTEB nDCG@10 scores."""
+    root = Path(results_dir)
+
+    if root.is_file():
+        paths = [root]
+    else:
+        paths = sorted(root.rglob("*.json"))
+
+    out: dict[str, dict] = {}
+
+    for result_path in paths:
+        data = json.loads(result_path.read_text())
+
+        # Skip legacy/cache JSON files; this API operates on standardized results.
+        if "task_name" not in data or "ratings" not in data or "scores" not in data:
+            continue
+
+        task = data["task_name"]
+        ratings = {m["model"]: m["rating"] for m in data["ratings"]}
+        models = list(ratings)
+
+        score_splits = data.get("scores", {})
+        if not score_splits:
+            continue
+
+        split = next(iter(score_splits))
+        rows = score_splits.get(split) or []
+        if not rows:
+            continue
+
+        truth = fetch_truth(models, task=task, split=split)
+        agreement = correlate(
+            ratings,
+            truth,
+            bootstrap=bootstrap,
+            seed=seed,
+        )
+
+        if "error" in agreement:
+            out[str(result_path)] = agreement
+            continue
+
+        lo, hi = agreement["spearman_ci95"]
+        row = rows[0]
+        row["main_score"] = agreement["spearman_rho"]
+        row["spearman"] = agreement["spearman_rho"]
+        row["spearman_ci_low"] = lo
+        row["spearman_ci_high"] = hi
+        row["kendall"] = agreement["kendall_tau"]
+        row["p_permutation"] = agreement["spearman_p_exact"]
+        row["n_models"] = agreement["n_models"]
+
+        # Definitions pending confirmation from Adnan.
+        row.setdefault("spearman_top10", None)
+        row.setdefault("kendall_ap", None)
+
+        result_path.write_text(json.dumps(data, indent=2))
+        out[str(result_path)] = agreement
+
+    return out
 
 
 def report(gym_path: str, ground_truth: dict[str, float], **kw) -> dict:

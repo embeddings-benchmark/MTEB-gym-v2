@@ -22,6 +22,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .baselines import BM25Retriever, ColBERTRetriever
+from .clients import AnthropicClient, MockClient, OpenAICompatClient
 from .config import GymConfig
 from .encoders import make_encoder
 from .judge import Judge, Verdict
@@ -90,9 +91,33 @@ def _parse_failure_rate_from(verdicts: list[Verdict]) -> float | None:
 
 
 class Gym:
-    def __init__(self, cfg: GymConfig, judge_client, gen_client=None):
+    def __init__(self, cfg: GymConfig, judge_client=None, gen_client=None):
         self.cfg = cfg
         cfg.ensure_dirs()
+
+        def build_client(model: str | None, base_url: str | None):
+            if not model:
+                return None
+            if model == "mock":
+                return MockClient(seed=cfg.seed)
+            if model.lower().startswith("claude"):
+                return AnthropicClient(model=model)
+            return OpenAICompatClient(model=model, base_url=base_url)
+
+        if judge_client is None:
+            judge_client = build_client(cfg.judge, cfg.judge_base_url)
+            if judge_client is None:
+                raise ValueError(
+                    "No judge configured. Pass judge_client=... "
+                    "or set GymConfig(judge='...')."
+                )
+
+        if gen_client is None and cfg.generator:
+            gen_client = build_client(
+                cfg.generator,
+                cfg.generator_base_url or cfg.judge_base_url,
+            )
+
         self.judge_client = judge_client
         self.gen_client = gen_client or judge_client
         self.harness = RetrievalHarness(cfg.cache_dir, top_k=cfg.top_k)
@@ -497,10 +522,17 @@ class Gym:
     # --------------------------------------------------------------- convenience
     def run(
         self,
-        models: list[str],
+        models: list[str] | None = None,
         *,
         output_folder: str | Path | None = None,
     ):
+        models = list(models if models is not None else self.cfg.models)
+        if not models:
+            raise ValueError(
+                "No models provided. Pass models to Gym.run(...) "
+                "or set GymConfig(models=[...])."
+            )
+
         started_at = time.time()
         corpus = self.load_corpus()
         queries = self.get_queries(corpus)

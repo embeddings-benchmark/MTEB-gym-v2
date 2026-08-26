@@ -398,6 +398,28 @@ def test_result_helpers():
     print("  standardized result helpers ok")
 
 
+
+def test_unified_gym_api():
+    import tempfile
+    from pathlib import Path
+
+    from gym import Gym, GymConfig
+    from gym.clients import MockClient
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = GymConfig(
+            judge="mock",
+            models=["model_a", "model_b"],
+            output_dir=Path(tmp),
+        )
+        gym = Gym(cfg)
+
+        assert isinstance(gym.judge_client, MockClient)
+        assert gym.cfg.models == ["model_a", "model_b"]
+
+    print("  unified Gym API ok")
+
+
 def test_corpus_control_resolution():
     import os
 
@@ -466,5 +488,6 @@ if __name__ == "__main__":
     test_matchup_resume_from_jsonl()
     test_repro_helpers()
     test_result_helpers()
+    test_unified_gym_api()
     test_corpus_control_resolution()
     print("\nAll smoke tests passed.")

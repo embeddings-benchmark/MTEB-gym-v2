@@ -17,9 +17,6 @@ from pathlib import Path
 
 import numpy as np
 
-_RESULTS_API = "https://api.github.com/repos/embeddings-benchmark/results/contents/results"
-_RESULTS_RAW = "https://raw.githubusercontent.com/embeddings-benchmark/results/main/results"
-
 BM25_NDCG = {
     "NFCorpus": 32.1,
     "SciFact": 68.63,
@@ -33,58 +30,73 @@ def fetch_truth(
     task: str = "NFCorpus",
     split: str = "test",
 ) -> dict[str, float]:
-    """Fetch official MTEB nDCG@10 scores for the requested models."""
-    import urllib.request
-
-    def _get_json(url: str):
-        with urllib.request.urlopen(url, timeout=30) as response:
-            return json.load(response)
+    """Load official MTEB nDCG@10 scores, evaluating cache misses via MTEB."""
+    import mteb
 
     out: dict[str, float] = {}
 
+    # BM25 is a reference anchor rather than an embedding model in MTEB.
     if "bm25" in models and task in BM25_NDCG:
         out["bm25"] = BM25_NDCG[task]
 
+    # Mirror the normal MTEB evaluation path: populate the local cache from the
+    # official results repository, then evaluate only task/model cache misses.
+    cache = mteb.ResultCache()
+    try:
+        cache.download_from_remote()
+    except Exception:
+        # A remote-cache failure should not prevent using an existing local
+        # cache or evaluating the model directly.
+        pass
+
+    task_obj = next(iter(mteb.get_tasks(tasks=[task])), None)
+    if task_obj is None:
+        return out
+
     for model in models:
-        if "/" not in model:
+        if model == "bm25" or "/" not in model:
             continue
 
-        slug = model.replace("/", "__")
         try:
-            revisions = [
-                entry["name"]
-                for entry in _get_json(f"{_RESULTS_API}/{slug}")
-                if entry["name"] != "model_meta.json"
-            ]
-            revisions.sort(
-                key=lambda revision: (
-                    revision in ("external", "no_revision_available"),
-                    revision,
-                )
+            # ModelMeta lets mteb.evaluate inspect the cache before loading
+            # model weights. Fall back to get_model for unregistered models.
+            try:
+                model_ref = mteb.get_model_meta(model)
+            except Exception:
+                model_ref = mteb.get_model(model)
+
+            result = mteb.evaluate(
+                model_ref,
+                task_obj,
+                cache=cache,
+                overwrite_strategy="only-missing",
+                show_progress_bar=False,
             )
 
-            for revision in revisions:
-                try:
-                    data = _get_json(
-                        f"{_RESULTS_RAW}/{slug}/{revision}/{task}.json"
-                    )
-                    scores = data.get("scores", {})
-                    rows = (
-                        scores.get(split)
-                        or scores.get("test")
-                        or next(iter(scores.values()), None)
-                    )
-                    if not rows:
-                        continue
+            task_result = next(
+                (r for r in result.task_results if r.task_name == task),
+                None,
+            )
+            if task_result is None or not task_result.scores:
+                continue
 
-                    out[model] = round(rows[0]["ndcg_at_10"] * 100, 2)
-                    break
-                except Exception:
-                    continue
+            if split in task_result.scores:
+                score_split = split
+            elif "test" in task_result.scores:
+                score_split = "test"
+            else:
+                score_split = next(iter(task_result.scores))
+
+            score = task_result.get_score(
+                splits=[score_split],
+                getter=lambda scores: scores["ndcg_at_10"],
+            )
+            out[model] = round(float(score) * 100, 2)
         except Exception:
             continue
 
     return out
+
 
 
 def _load_gym(path: str) -> dict[str, float]:

@@ -475,6 +475,72 @@ def test_rank_agreement_api():
     print("  rank agreement API ok")
 
 
+
+def test_rank_agreement_mteb_fallback():
+    import sys
+    import types
+
+    import gym.validate as gv
+
+    calls = []
+
+    class FakeCache:
+        def download_from_remote(self):
+            calls.append("download")
+
+    class FakeTaskResult:
+        task_name = "NFCorpus"
+        scores = {"test": [{"ndcg_at_10": 0.42}]}
+
+        def get_score(self, splits=None, getter=None):
+            assert splits == ["test"]
+            return getter(self.scores["test"][0])
+
+    class FakeModelResult:
+        task_results = [FakeTaskResult()]
+
+    def fake_get_tasks(tasks):
+        assert tasks == ["NFCorpus"]
+        return [object()]
+
+    def fake_get_model_meta(model):
+        assert model == "org/model"
+        calls.append("meta")
+        return ("meta", model)
+
+    def fake_get_model(model):
+        raise AssertionError("get_model fallback should not be needed")
+
+    def fake_evaluate(model, task, **kwargs):
+        assert model == ("meta", "org/model")
+        assert kwargs["overwrite_strategy"] == "only-missing"
+        assert kwargs["show_progress_bar"] is False
+        assert isinstance(kwargs["cache"], FakeCache)
+        calls.append("evaluate")
+        return FakeModelResult()
+
+    fake_mteb = types.SimpleNamespace(
+        ResultCache=FakeCache,
+        get_tasks=fake_get_tasks,
+        get_model_meta=fake_get_model_meta,
+        get_model=fake_get_model,
+        evaluate=fake_evaluate,
+    )
+
+    old_mteb = sys.modules.get("mteb")
+    sys.modules["mteb"] = fake_mteb
+    try:
+        out = gv.fetch_truth(["org/model"], task="NFCorpus", split="test")
+        assert out == {"org/model": 42.0}
+        assert calls == ["download", "meta", "evaluate"]
+    finally:
+        if old_mteb is None:
+            sys.modules.pop("mteb", None)
+        else:
+            sys.modules["mteb"] = old_mteb
+
+    print("  rank agreement MTEB fallback ok")
+
 def test_corpus_control_resolution():
     import os
 
@@ -545,5 +611,6 @@ if __name__ == "__main__":
     test_result_helpers()
     test_unified_gym_api()
     test_rank_agreement_api()
+    test_rank_agreement_mteb_fallback()
     test_corpus_control_resolution()
     print("\nAll smoke tests passed.")

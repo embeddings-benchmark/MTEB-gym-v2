@@ -588,32 +588,50 @@ def test_corpus_control_resolution():
     print("  corpus control resolution ok")
 
 
-def test_registry_resolution():
+def test_judge_instruction_resolution():
     import os
-    from gym.judge import (_JUDGE_SYSTEM, _TASK_ALIASES, _TASK_INSTRUCTIONS,
-                           judge_system, resolve_task_instruction)
+    from gym.config import GymConfig
+    from gym.judge import _JUDGE_SYSTEM, judge_system
+    from gym.results import judge_instruction_metadata
     os.environ.pop("GYM_JUDGE_INSTR_OVERRIDE", None)
-    # absent entry -> generic prompt byte-identical: cache preservation rests on this
-    assert judge_system("SomeUnknownTask") == _JUDGE_SYSTEM
-    assert judge_system(None) == _JUDGE_SYSTEM
-    assert judge_system("NanoNFCorpusRetrieval") == judge_system("NFCorpus")
+    # no instruction -> generic prompt byte-identical: cache preservation rests on this
+    assert judge_system() == _JUDGE_SYSTEM
+    assert "refute" in judge_system("Find docs that refute the claim")
+    # False = control arm / reproducing generic runs; local corpora skip mteb
+    assert judge_instruction_metadata(
+        GymConfig(task_name="ArguAna", judge_instruction_from_task=False)) == {
+        "instruction": None, "instruction_source": None}
+    assert judge_instruction_metadata(
+        GymConfig(task_name="x", corpus_path="./docs")) == {
+        "instruction": None, "instruction_source": None}
     try:
         import mteb
     except ImportError:
-        print("  registry: mteb absent, name checks skipped")
+        print("  instruction: mteb absent, prompt checks skipped")
         return
-    tasks = {t.metadata.name: t for t in mteb.get_tasks()}
-    # every alias is a real task name, every entry reachable from one
-    # (the v1 bug: "Touche2020" matched no task and silently never fired)
-    for alias in _TASK_ALIASES:
-        assert alias in tasks and alias not in _TASK_INSTRUCTIONS, alias
-    reachable = set(_TASK_ALIASES.values()) | (set(_TASK_INSTRUCTIONS) & set(tasks))
-    assert reachable == set(_TASK_INSTRUCTIONS)
-    # verbatim against mteb wherever mteb carries a prompt
-    for name in set(_TASK_INSTRUCTIONS) | set(_TASK_ALIASES):
-        official = (tasks[name].metadata.prompt or {}).get("query") if name in tasks else None
-        if official:
-            assert resolve_task_instruction(name).rstrip(".") == official.rstrip("."), name
+    # default: the task's own mteb prompt
+    meta = judge_instruction_metadata(GymConfig(task_name="ArguAna"))
+    assert meta["instruction_source"] == "mteb:TaskMetadata.prompt"
+    assert "refute the claim" in meta["instruction"]
+    # a task with no mteb prompt falls back to generic, like mteb does
+    assert judge_instruction_metadata(GymConfig(task_name="AILACasedocs")) == {
+        "instruction": None, "instruction_source": None}
+
+def test_local_corpus():
+    import tempfile
+    from gym import Gym, GymConfig
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "a.txt").write_text("alpha doc about refunds")
+        (root / "b.md").write_text("beta doc about shipping")
+        cfg = GymConfig(task_name="my-docs", corpus_path=str(root), judge="mock",
+                        judge_instruction="Prefer results that answer support questions.",
+                        models=["m1", "m2"], output_dir=root / "out")
+        g = Gym(cfg)
+        corpus = g.load_corpus()
+        assert set(corpus) == {"a.txt", "b.md"}
+        assert "support questions" in g.judge.system
 
 if __name__ == "__main__":
     print("Running MTEB Gym smoke tests...\n")
@@ -640,5 +658,6 @@ if __name__ == "__main__":
     test_rank_agreement_api()
     test_rank_agreement_mteb_fallback()
     test_corpus_control_resolution()
-    test_registry_resolution()
+    test_judge_instruction_resolution()
+    test_local_corpus()
     print("\nAll smoke tests passed.")

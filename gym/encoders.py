@@ -109,8 +109,9 @@ def _cap_doc_chars(texts):
     at their max sequence length anyway, but several encode paths materialize
     quadratic attention over the full tokenized length first (observed as
     100-256GB allocations). Capping characters before tokenization bounds
-    every path. Applied at encode time only, so corpus fingerprints and cache
-    keys are unchanged.
+    every path. Applied at encode time; the retrieval cache keys the cap
+    (RetrievalHarness._doc_cap_suffix), so capped and uncapped embeddings
+    never share a cache entry.
     """
     cap = int(os.environ.get("GYM_MAX_DOC_CHARS", "0") or 0)
     if not cap:

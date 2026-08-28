@@ -588,6 +588,33 @@ def test_corpus_control_resolution():
     print("  corpus control resolution ok")
 
 
+def test_registry_resolution():
+    import os
+    from gym.judge import (_JUDGE_SYSTEM, _TASK_ALIASES, _TASK_INSTRUCTIONS,
+                           judge_system, resolve_task_instruction)
+    os.environ.pop("GYM_JUDGE_INSTR_OVERRIDE", None)
+    # absent entry -> generic prompt byte-identical: cache preservation rests on this
+    assert judge_system("SomeUnknownTask") == _JUDGE_SYSTEM
+    assert judge_system(None) == _JUDGE_SYSTEM
+    assert judge_system("NanoNFCorpusRetrieval") == judge_system("NFCorpus")
+    try:
+        import mteb
+    except ImportError:
+        print("  registry: mteb absent, name checks skipped")
+        return
+    tasks = {t.metadata.name: t for t in mteb.get_tasks()}
+    # every alias is a real task name, every entry reachable from one
+    # (the v1 bug: "Touche2020" matched no task and silently never fired)
+    for alias in _TASK_ALIASES:
+        assert alias in tasks and alias not in _TASK_INSTRUCTIONS, alias
+    reachable = set(_TASK_ALIASES.values()) | (set(_TASK_INSTRUCTIONS) & set(tasks))
+    assert reachable == set(_TASK_INSTRUCTIONS)
+    # verbatim against mteb wherever mteb carries a prompt
+    for name in set(_TASK_INSTRUCTIONS) | set(_TASK_ALIASES):
+        official = (tasks[name].metadata.prompt or {}).get("query") if name in tasks else None
+        if official:
+            assert resolve_task_instruction(name).rstrip(".") == official.rstrip("."), name
+
 if __name__ == "__main__":
     print("Running MTEB Gym smoke tests...\n")
     test_json_extraction()
@@ -613,4 +640,5 @@ if __name__ == "__main__":
     test_rank_agreement_api()
     test_rank_agreement_mteb_fallback()
     test_corpus_control_resolution()
+    test_registry_resolution()
     print("\nAll smoke tests passed.")

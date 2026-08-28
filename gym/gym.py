@@ -275,6 +275,14 @@ class Gym:
             inject = self._inject_qrels_docs()
             if inject:
                 key += f"|inject_qrels={inject}"
+        # Encode-time doc caps change the retrievals behind every verdict.
+        # Conditional on non-default values so existing caches stay valid.
+        doc_chars = int(os.environ.get("GYM_MAX_DOC_CHARS", "0") or 0)
+        if doc_chars:
+            key += f"|doc_chars={doc_chars}"
+        max_seq = int(os.environ.get("GYM_MAX_SEQ", "4096"))
+        if max_seq != 4096:
+            key += f"|max_seq={max_seq}"
         return hashlib.sha256(key.encode()).hexdigest()[:8]
 
     def _queries_path(self) -> Path:
@@ -387,6 +395,14 @@ class Gym:
             inject = self._inject_qrels_docs()
             if inject:
                 key += f"|inject_qrels={inject}"
+        # Encode-time doc caps change the retrievals behind every verdict.
+        # Conditional on non-default values so existing caches stay valid.
+        doc_chars = int(os.environ.get("GYM_MAX_DOC_CHARS", "0") or 0)
+        if doc_chars:
+            key += f"|doc_chars={doc_chars}"
+        max_seq = int(os.environ.get("GYM_MAX_SEQ", "4096"))
+        if max_seq != 4096:
+            key += f"|max_seq={max_seq}"
         return hashlib.sha256(key.encode()).hexdigest()[:8]
 
     def _matchup_path(self, a, b, queries) -> Path:

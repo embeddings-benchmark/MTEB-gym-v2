@@ -47,6 +47,19 @@ def _corpus_fingerprint(corpus: dict[str, str]) -> str:
     return h.hexdigest()[:12]
 
 
+def _doc_cap_suffix() -> str:
+    """Non-default GYM_MAX_DOC_CHARS / GYM_MAX_SEQ change embeddings for long
+    documents, so they key the cache. Empty at defaults: existing caches stay valid."""
+    bits = []
+    chars = int(os.environ.get("GYM_MAX_DOC_CHARS", "0") or 0)
+    if chars:
+        bits.append(f"chars{chars}")
+    seq = int(os.environ.get("GYM_MAX_SEQ", "4096"))
+    if seq != 4096:
+        bits.append(f"seq{seq}")
+    return ("_" + "-".join(bits)) if bits else ""
+
+
 class RetrievalHarness:
     def __init__(self, cache_dir: Path, top_k: int = 10):
         self.cache_dir = Path(cache_dir)
@@ -54,7 +67,8 @@ class RetrievalHarness:
         self.top_k = top_k
 
     def _corpus_cache_path(self, model_name: str, fp: str) -> Path:
-        return self.cache_dir / f"corpus_{cache_key(model_name)}_{fp}.npy"
+        return self.cache_dir / (
+            f"corpus_{cache_key(model_name)}{_doc_cap_suffix()}_{fp}.npy")
 
     def encode_corpus(self, encoder: Encoder, corpus: dict[str, str]) -> np.ndarray:
         fp = _corpus_fingerprint(corpus)

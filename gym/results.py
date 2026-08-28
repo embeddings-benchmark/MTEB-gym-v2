@@ -89,14 +89,14 @@ def judge_instruction_metadata(task_name: str) -> dict[str, Any]:
     """Describe the instruction source using the same resolution as Judge."""
     import os
 
-    from .judge import REGISTRY_VERSION, _TASK_INSTRUCTIONS
+    from .judge import REGISTRY_VERSION, resolve_task_instruction
 
     override = os.environ.get("GYM_JUDGE_INSTR_OVERRIDE") or None
     if override is not None:
         instruction = override
         source = "env:GYM_JUDGE_INSTR_OVERRIDE"
     else:
-        instruction = _TASK_INSTRUCTIONS.get(task_name)
+        instruction = resolve_task_instruction(task_name)
         source = "mteb_task_prompt_registry" if instruction is not None else None
 
     return {
@@ -229,9 +229,10 @@ def build_result_record(
             "identical_retrieval_rate",
             "n_comparisons",
         )},
-        "kappa_committed": None,
-        "committed_agreement": None,
-        "clear_winner_agreement": None,
+        # judge_ prefix = verdict-level (judge vs qrels, human-query arms only)
+        "judge_kappa_committed": None,
+        "judge_committed_agreement": None,
+        "judge_clear_winner_agreement": None,
     }
 
     versions = runtime_versions()

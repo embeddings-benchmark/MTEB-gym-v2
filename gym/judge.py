@@ -55,20 +55,51 @@ _JUDGE_SYSTEM = (
 # byte-for-byte, so existing verdict caches are untouched. Entries are frozen
 # before any judged run; any edit bumps REGISTRY_VERSION (which participates in
 # the verdict-cache signature) and requires a new pre-registration.
-REGISTRY_VERSION = 1
+REGISTRY_VERSION = 2
 _TASK_INSTRUCTIONS: dict[str, str] = {
-    # source: mteb TaskMetadata.prompt, pinned mteb 2.15.1, all verbatim.
-    # Batch 2 (FEVER..FiQA2018) frozen 2026-07-29 BEFORE any judged run against
-    # them; expectations recorded in docs/ai/TASK_PLAN_2026-07-29_master.md W3.
+    # source: mteb TaskMetadata.prompt, all verbatim. Frozen against mteb
+    # 2.15.1; re-verified byte-identical against 2.15.4 (except Touche2020,
+    # see its provenance note). Batch 2 (FEVER..FiQA2018) frozen 2026-07-29
+    # BEFORE any judged run against them; expectations recorded in
+    # docs/ai/TASK_PLAN_2026-07-29_master.md W3.
     "ArguAna": "Given a claim, find documents that refute the claim.",
     "FEVER": "Given a claim, retrieve documents that support or refute the claim",
     "ClimateFEVER": "Given a claim about climate change, retrieve documents that support or refute the claim",
+    # PROVENANCE EXCEPTION: verbatim from NanoTouche2020Retrieval's prompt;
+    # the full-size task (Touche2020Retrieval.v3) has no mteb prompt and no
+    # task named "Touche2020" exists in mteb 2.15.4. Aliases route both names.
     "Touche2020": "Given a question, retrieve detailed and persuasive arguments that answer the question",
     "HotpotQA": "Given a multi-hop question, retrieve documents that can help answer the question",
     "NFCorpus": "Given a question, retrieve relevant documents that best answer the question",
     "SciFact": "Given a scientific claim, retrieve documents that support or refute the claim",
     "FiQA2018": "Given a financial question, retrieve user replies that best answer the question",
 }
+
+# v2: alias nano/renamed task names to their canonical entry. v1 keyed by
+# full-size names only, so nano runs silently got the GENERIC prompt and the
+# Stage-1 ablations would have compared a different judge condition than full
+# scale. Same instruction text per corpus (nano prompts are byte-identical in
+# mteb), so the frozen pre-registration extends unchanged.
+_TASK_ALIASES: dict[str, str] = {
+    "NanoArguAnaRetrieval": "ArguAna",
+    "NanoFEVERRetrieval": "FEVER",
+    "NanoClimateFeverRetrieval": "ClimateFEVER",
+    "Touche2020Retrieval.v3": "Touche2020",
+    "NanoTouche2020Retrieval": "Touche2020",
+    "NanoHotpotQARetrieval": "HotpotQA",
+    "NanoNFCorpusRetrieval": "NFCorpus",
+    "NanoSciFactRetrieval": "SciFact",
+    "NanoFiQA2018Retrieval": "FiQA2018",
+}
+
+
+def resolve_task_instruction(task_name: str | None) -> str | None:
+    """Registry instruction for a task, following aliases. None = generic.
+    Single resolution path for judge_system() and the result-record metadata."""
+    if not task_name:
+        return None
+    canonical = _TASK_ALIASES.get(task_name, task_name)
+    return _TASK_INSTRUCTIONS.get(canonical)
 
 
 def judge_system(task_name: str | None = None) -> str:
@@ -85,7 +116,7 @@ def judge_system(task_name: str | None = None) -> str:
     # Unset -> behaviour is byte-identical to REGISTRY_VERSION 1. The verdict-cache
     # signature in gym.py hashes the RESOLVED prompt, so an override automatically
     # gets its own cache namespace and can never collide with a real result.
-    instr = os.environ.get("GYM_JUDGE_INSTR_OVERRIDE") or _TASK_INSTRUCTIONS.get(task_name or "")
+    instr = os.environ.get("GYM_JUDGE_INSTR_OVERRIDE") or resolve_task_instruction(task_name)
     if not instr:
         return _JUDGE_SYSTEM
     return (

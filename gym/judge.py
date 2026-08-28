@@ -25,6 +25,7 @@ the score; the metric just lets you see how bad it is for a given judge.
 """
 
 from __future__ import annotations
+import os
 
 import json
 import logging
@@ -47,6 +48,60 @@ _JUDGE_SYSTEM = (
     "\"confidence\": \"low\"|\"medium\"|\"high\", \"reasoning\": \"one sentence\"}"
 )
 
+# ---------------------------------------------------------------- task registry
+# Per-task judge instructions, copied VERBATIM from mteb TaskMetadata.prompt
+# (pre-registered; provenance recorded per entry). An absent entry means the
+# generic relevance criterion applies and judge_system() returns _JUDGE_SYSTEM
+# byte-for-byte, so existing verdict caches are untouched. Entries are frozen
+# before any judged run; any edit bumps REGISTRY_VERSION (which participates in
+# the verdict-cache signature) and requires a new pre-registration.
+REGISTRY_VERSION = 1
+_TASK_INSTRUCTIONS: dict[str, str] = {
+    # source: mteb TaskMetadata.prompt, pinned mteb 2.15.1, all verbatim.
+    # Batch 2 (FEVER..FiQA2018) frozen 2026-07-29 BEFORE any judged run against
+    # them; expectations recorded in docs/ai/TASK_PLAN_2026-07-29_master.md W3.
+    "ArguAna": "Given a claim, find documents that refute the claim.",
+    "FEVER": "Given a claim, retrieve documents that support or refute the claim",
+    "ClimateFEVER": "Given a claim about climate change, retrieve documents that support or refute the claim",
+    "Touche2020": "Given a question, retrieve detailed and persuasive arguments that answer the question",
+    "HotpotQA": "Given a multi-hop question, retrieve documents that can help answer the question",
+    "NFCorpus": "Given a question, retrieve relevant documents that best answer the question",
+    "SciFact": "Given a scientific claim, retrieve documents that support or refute the claim",
+    "FiQA2018": "Given a financial question, retrieve user replies that best answer the question",
+}
+
+
+def judge_system(task_name: str | None = None) -> str:
+    """Generic judge prompt, with the dataset's own task instruction injected
+    when the registry has one. The injected line replaces only the criterion
+    clause's referent ("satisfies the query") context by prefacing the task
+    definition; all other wording is identical to the generic prompt."""
+    # CONTROL-ARM MECHANISM (pre-registered as disclosed control arms, not the
+    # confirmatory condition). When GYM_JUDGE_INSTR_OVERRIDE is set, its text is
+    # used as the task instruction for whatever task is being judged. This exists
+    # so the placebo arm (instruction-shaped but wrong-task text) and the
+    # cross-corpus negative control (ArguAna's instruction injected into a healthy
+    # corpus) can run WITHOUT editing the frozen registry or the generic prompt.
+    # Unset -> behaviour is byte-identical to REGISTRY_VERSION 1. The verdict-cache
+    # signature in gym.py hashes the RESOLVED prompt, so an override automatically
+    # gets its own cache namespace and can never collide with a real result.
+    instr = os.environ.get("GYM_JUDGE_INSTR_OVERRIDE") or _TASK_INSTRUCTIONS.get(task_name or "")
+    if not instr:
+        return _JUDGE_SYSTEM
+    return (
+        "You compare two retrieval systems. The retrieval task is: "
+        + instr.rstrip(".") + ". "
+        "Given a query and two ranked result sets "
+        "(System A and System B), decide which set better satisfies this task for "
+        "the query, judging task fit, coverage of the information need, and ranking "
+        "quality. Be decisive "
+        "when one set is clearly better; only answer 'tie' when they are genuinely "
+        "indistinguishable in usefulness. "
+        "Reply with strict JSON: {\"winner\": \"A\"|\"B\"|\"tie\", "
+        "\"confidence\": \"low\"|\"medium\"|\"high\", \"reasoning\": \"one sentence\"}"
+    )
+
+
 _OUTCOME = {"A": 1.0, "tie": 0.5, "B": 0.0}
 
 
@@ -60,6 +115,10 @@ class Verdict:
     raw: list[str] = field(default_factory=list)   # per-order winners, for audit
     reasoning: str = ""
     note: str = ""
+    # per-order judge-parse success, so parse_failure_rate can be recomputed
+    # from disk on cached/resumed runs (empty on verdicts written before this
+    # field existed, and on "identical" short-circuits that make no judge call)
+    parsed_ok: list[bool] = field(default_factory=list)
 
 
 def _format_results(r) -> str:
@@ -73,9 +132,15 @@ def _parse_response(raw: str) -> tuple[str, str, bool]:
         members = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         members = None
-    if isinstance(members, list):
+    # A real ensemble response is a JSON array of member-response STRINGS
+    # (EnsembleClient.chat packs them that way). A lone judge that happens to
+    # emit a top-level JSON array of objects must NOT be voted as an ensemble:
+    # that path drops every dict element and silently returns a parse-failure
+    # tie (the v0.1 tie-flattening bug). Require all-string elements, else fall
+    # through to single-object parsing below.
+    if isinstance(members, list) and members and all(isinstance(m, str) for m in members):
         from .clients import EnsembleClient
-        outs = [_extract_json(m) for m in members if isinstance(m, str)]
+        outs = [_extract_json(m) for m in members]
         winners = [o["winner"] for o in outs if o.get("winner") in ("A", "B", "tie")]
         if not winners:
             return "tie", "", False
@@ -90,7 +155,8 @@ def _parse_response(raw: str) -> tuple[str, str, bool]:
 
 class Judge:
     def __init__(self, client, flip_positions: bool = True, note: str = "",
-                 workers: int = 1):
+                 workers: int = 1, task_name: str | None = None):
+        self.system = judge_system(task_name)
         self.client = client
         self.flip = flip_positions
         self.note = note
@@ -112,7 +178,7 @@ class Judge:
         flatten the leaderboard the way v0.1's hard ties did.
         """
         msg = [
-            {"role": "system", "content": _JUDGE_SYSTEM},
+            {"role": "system", "content": self.system},
             {"role": "user", "content":
                 f"Query: {query}\n\nSystem A results:\n{_format_results(first)}\n\n"
                 f"System B results:\n{_format_results(second)}\n\nReply as JSON."},
@@ -144,10 +210,11 @@ class Judge:
         raws: list[str] = []
         scores: list[float] = []
         reasonings: list[str] = []
+        parsed: list[bool] = []
 
         # Order 1: A shown first.
-        w1, why1, _ok1 = self._ask(ra.query, ra, rb)
-        raws.append(w1); reasonings.append(why1)
+        w1, why1, ok1 = self._ask(ra.query, ra, rb)
+        raws.append(w1); reasonings.append(why1); parsed.append(ok1)
         scores.append(_OUTCOME[w1])
         if w1 != "tie":
             with self._lock:
@@ -157,8 +224,8 @@ class Judge:
 
         if self.flip:
             # Order 2: B shown first -> map its 'A'/'B' back to our A/B space.
-            w2, why2, _ok2 = self._ask(ra.query, rb, ra)
-            raws.append(w2); reasonings.append(why2)
+            w2, why2, ok2 = self._ask(ra.query, rb, ra)
+            raws.append(w2); reasonings.append(why2); parsed.append(ok2)
             # In flipped order, "A" means model_b won.
             mapped = {"A": 0.0, "B": 1.0, "tie": 0.5}[w2]
             scores.append(mapped)
@@ -173,7 +240,54 @@ class Judge:
             qid=ra.qid, query=ra.query, model_a=model_a, model_b=model_b,
             score_a=score_a, raw=raws,
             reasoning=" | ".join(r for r in reasonings if r), note=self.note,
+            parsed_ok=parsed,
         )
+
+    def _early_failure_guard(self, n_done: int, n_failed: int,
+                             n_identical: int = 0) -> None:
+        """Abort loudly when the judge endpoint is effectively dead.
+
+        A dead endpoint / bad API key makes every verdict a parse-failure tie;
+        without this guard that surfaces as a flat leaderboard instead of an
+        error (observed: 12k/12k silent ties on a broken judge URL). Checked
+        after the first GYM_EARLY_FAIL_WINDOW verdicts (default 30): if more
+        than GYM_MAX_EARLY_PARSE_FAIL (default 0.5) of them failed to parse,
+        raise instead of continuing.
+        """
+        import os
+        window = int(os.environ.get("GYM_EARLY_FAIL_WINDOW", "30"))
+        if n_done != window:
+            return
+        max_rate = float(os.environ.get("GYM_MAX_EARLY_PARSE_FAIL", "0.5"))
+        rate = n_failed / max(n_done, 1)
+        if rate > max_rate:
+            raise RuntimeError(
+                f"judge parse-failure rate {rate:.0%} over the first {n_done} "
+                f"verdicts (> {max_rate:.0%}): the judge endpoint is likely dead "
+                "or the API key invalid. Aborting instead of silently scoring "
+                "ties. Set GYM_MAX_EARLY_PARSE_FAIL=1.0 to override.")
+        # A structurally distinct failure the rate above is blind to: the judge is
+        # never CALLED because every pair's retrieved lists are byte-identical, so
+        # there are no parse failures to count. Observed on CUREv1, whose corpus
+        # loaded as 11 empty documents (a multi-subset dataset whose subset names
+        # were read as documents): 21k/21k identical-list ties, every model left on
+        # the default rating, Spearman nan, parse-failure rate 0.0.
+        # Genuine judge ties carry parsed_ok entries; identical-list short-circuits
+        # carry raw == ["identical"] with an empty parsed_ok, so the two are cleanly
+        # separable and this cannot fire on a merely tie-heavy corpus (our real ones
+        # sit at 0.26-0.66 ties). A high rate here always means degenerate
+        # retrieval: an empty or mis-loaded corpus, or a corpus no larger than
+        # top_k, where every model necessarily returns the same set.
+        max_ident = float(os.environ.get("GYM_MAX_EARLY_IDENTICAL", "0.95"))
+        irate = n_identical / max(n_done, 1)
+        if irate > max_ident:
+            raise RuntimeError(
+                f"{irate:.0%} of the first {n_done} pairs had byte-identical "
+                f"retrieved lists (over {max_ident:.0%}), so the judge was never "
+                "called and every verdict is a tie. The corpus is almost certainly "
+                "empty, mis-loaded, or smaller than top_k; check the corpus loader "
+                "for this task before spending judge budget. Set "
+                "GYM_MAX_EARLY_IDENTICAL=1.0 to override.")
 
     def judge_all(self, retr_a: list, retr_b: list, model_a: str, model_b: str,
                   on_verdict=None) -> list[Verdict]:
@@ -183,9 +297,25 @@ class Judge:
         by_qid = {r.qid: r for r in retr_b}
         pairs = [(ra, by_qid[ra.qid]) for ra in retr_a if ra.qid in by_qid]
 
+        import threading
+        _efg_lock = threading.Lock()
+        _efg = {"done": 0, "failed": 0, "identical": 0}
+
         def _one(pair):
             ra, rb = pair
             v = self.judge_pair(ra, rb, model_a, model_b)
+            # early dead-endpoint guard: a verdict whose every judge call failed
+            # to parse (parsed_ok all-False; empty = no call made, not a failure)
+            failed = bool(getattr(v, "parsed_ok", None)) and not any(v.parsed_ok)
+            identical = list(getattr(v, "raw", []) or []) == ["identical"]
+            with _efg_lock:
+                _efg["done"] += 1
+                if failed:
+                    _efg["failed"] += 1
+                if identical:
+                    _efg["identical"] += 1
+                self._early_failure_guard(_efg["done"], _efg["failed"],
+                                          _efg["identical"])
             if on_verdict is not None:
                 on_verdict(v)
             return v

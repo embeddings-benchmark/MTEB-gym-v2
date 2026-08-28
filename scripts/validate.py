@@ -19,6 +19,12 @@ from gym.validate import report
 # Use --fetch-truth to re-pull live instead of trusting these.
 MTEB_NFCORPUS = {
     "bm25": 32.5,
+    # ColBERTv2 (colbert-ir/colbertv2.0) official BEIR NFCorpus nDCG@10.
+    # The published ColBERTv2 paper / BEIR leaderboard report ~33.8 (test
+    # split). The gym entrant is the bare name "colbert"; fetch_truth skips
+    # it (no "/"), so this anchor is always used. Replace with a self-run
+    # mteb value if it materially differs.
+    "colbert": 33.8,
     "sentence-transformers/all-MiniLM-L6-v2": 31.59,   # rev 8b3219a9
     "intfloat/multilingual-e5-small": 31.10,           # rev fd1525a9
     "intfloat/multilingual-e5-large-instruct": 36.34,  # rev baa7be48
@@ -50,7 +56,8 @@ _RESULTS_API = "https://api.github.com/repos/embeddings-benchmark/results/conten
 _RESULTS_RAW = "https://raw.githubusercontent.com/embeddings-benchmark/results/main/results"
 
 
-def fetch_truth(models: list[str], task: str = "NFCorpus") -> dict[str, float]:
+def fetch_truth(models: list[str], task: str = "NFCorpus",
+                split: str = "test") -> dict[str, float]:
     """Pull official nDCG@10 for `models` from the embeddings-benchmark/results repo."""
     import urllib.request
 
@@ -71,7 +78,15 @@ def fetch_truth(models: list[str], task: str = "NFCorpus") -> dict[str, float]:
             for rev in revisions:
                 try:
                     data = _get_json(f"{_RESULTS_RAW}/{slug}/{rev}/{task}.json")
-                    out[model] = round(data["scores"]["test"][0]["ndcg_at_10"] * 100, 2)
+                    scores = data.get("scores", {})
+                    # Prefer the requested split, then 'test', then any available
+                    # split. Hardcoding 'test' silently mis-anchored any task whose
+                    # official scores live under dev/train/validation.
+                    rows = (scores.get(split) or scores.get("test")
+                            or next(iter(scores.values()), None))
+                    if not rows:
+                        continue
+                    out[model] = round(rows[0]["ndcg_at_10"] * 100, 2)
                     break
                 except Exception:  # noqa: BLE001 - missing file for this revision
                     continue
@@ -90,6 +105,8 @@ def main():
                          "for the gym's entrants (bm25 keeps its BEIR reference anchor)")
     ap.add_argument("--task", default=None,
                     help="task to anchor against; defaults to the task in the gym leaderboard")
+    ap.add_argument("--split", default="test",
+                    help="results-repo split to read ground-truth scores from (default test)")
     ap.add_argument("--bootstrap", type=int, default=1000)
     args = ap.parse_args()
 
@@ -108,7 +125,7 @@ def main():
         # fetch over the gym's entrants (not just the built-in keys) and for the
         # leaderboard's task (not a hardcoded one), so added models and non-NFCorpus
         # runs get the right official scores instead of being dropped or mis-anchored.
-        fetched = fetch_truth(gym_models, task=task)
+        fetched = fetch_truth(gym_models, task=task, split=args.split)
         print(f"fetched {len(fetched)} official {task} scores from embeddings-benchmark/results")
         truth = {**truth, **fetched}
     res = report(args.gym, truth, bootstrap=args.bootstrap)

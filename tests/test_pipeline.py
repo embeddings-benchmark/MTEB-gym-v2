@@ -311,6 +311,283 @@ def test_matchup_resume_from_jsonl(tmp_dir="results/_test_resume"):
     print("  matchup JSONL resume ok (resume judged only the missing queries)")
 
 
+def test_repro_helpers():
+    from gym.repro import canonical_config, config_hash, git_revision
+
+    a = {"task": "NFCorpus", "n_queries": 300, "seed": 0}
+    b = {"seed": 0, "n_queries": 300, "task": "NFCorpus"}
+
+    assert canonical_config(a) == canonical_config(b)
+    assert config_hash(a) == config_hash(b)
+    assert len(config_hash(a)) == 8
+
+    rev = git_revision()
+    assert rev is None or len(rev) == 40
+    print("  reproducibility helpers ok")
+
+
+
+def test_result_helpers():
+    import json
+    import tempfile
+
+    from gym.results import (
+        experiment_config_hash,
+        result_directory,
+        runtime_versions,
+    )
+
+    cfg = {
+        "task_name": "NFCorpus",
+        "n_queries": 300,
+        "top_k": 10,
+        "seed": 0,
+    }
+
+    versions = runtime_versions()
+    assert "mteb_version" in versions
+    assert "gym_version" in versions
+    assert "gym_revision" in versions
+
+    # Legacy/default synthetic arm keeps the established path.
+    synthetic_path = result_directory(
+        "results",
+        "Qwen/Qwen3.6-27B",
+        "MiniMaxAI/MiniMax-M2.7",
+        cfg,
+    )
+    assert str(synthetic_path) == (
+        "results/Qwen-Qwen3.6-27B__MiniMaxAI-MiniMax-M2.7/45a0e48a"
+    )
+
+    # Human-query runs get an explicit human-queries arm.
+    human_cfg = {**cfg, "arm": "human"}
+    human_path = result_directory(
+        "results",
+        "Qwen/Qwen3.6-27B",
+        None,
+        human_cfg,
+    )
+    assert human_path.parent.name == "Qwen-Qwen3.6-27B__human-queries"
+    assert human_path.name == experiment_config_hash(human_cfg)
+
+    # Serializing config_hash must not alter the underlying experiment hash.
+    hashed_cfg = dict(human_cfg)
+    hashed_cfg["config_hash"] = experiment_config_hash(hashed_cfg)
+    assert experiment_config_hash(hashed_cfg) == hashed_cfg["config_hash"]
+
+    # A task result lands at <arm>/<config-hash>/<task>.json.
+    with tempfile.TemporaryDirectory() as tmp:
+        out_dir = result_directory(
+            tmp,
+            "Qwen/Qwen3.6-27B",
+            "MiniMaxAI/MiniMax-M2.7",
+            cfg,
+        )
+        out_dir.mkdir(parents=True, exist_ok=True)
+        result_path = out_dir / "NFCorpus.json"
+        result_path.write_text(json.dumps({
+            "task_name": "NFCorpus",
+            "config": cfg,
+        }))
+
+        assert result_path.exists()
+        assert json.loads(result_path.read_text())["task_name"] == "NFCorpus"
+        assert result_path.parent.name == experiment_config_hash(cfg)
+
+    print("  standardized result helpers ok")
+
+
+
+def test_unified_gym_api():
+    import tempfile
+    from pathlib import Path
+
+    from gym import Gym, GymConfig
+    from gym.clients import MockClient
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = GymConfig(
+            judge="mock",
+            models=["model_a", "model_b"],
+            output_dir=Path(tmp),
+        )
+        gym = Gym(cfg)
+
+        assert isinstance(gym.judge_client, MockClient)
+        assert gym.cfg.models == ["model_a", "model_b"]
+
+    print("  unified Gym API ok")
+
+
+
+def test_rank_agreement_api():
+    import json
+    import tempfile
+    from pathlib import Path
+
+    import gym.validate as gv
+
+    original_fetch = gv.fetch_truth
+    try:
+        gv.fetch_truth = lambda models, task="NFCorpus", split="test": {
+            "model_a": 30.0,
+            "model_b": 20.0,
+            "model_c": 10.0,
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result_path = Path(tmp) / "NFCorpus.json"
+            result_path.write_text(json.dumps({
+                "task_name": "NFCorpus",
+                "ratings": [
+                    {"model": "model_a", "rating": 1100},
+                    {"model": "model_b", "rating": 1000},
+                    {"model": "model_c", "rating": 900},
+                ],
+                "scores": {
+                    "test": [{
+                        "main_score": None,
+                        "spearman": None,
+                        "spearman_ci_low": None,
+                        "spearman_ci_high": None,
+                        "spearman_top10": None,
+                        "kendall": None,
+                        "kendall_ap": None,
+                        "p_permutation": None,
+                        "n_models": 3,
+                    }]
+                },
+            }))
+
+            out = gv.rank_agreement(result_path, bootstrap=100, seed=0)
+            updated = json.loads(result_path.read_text())
+            row = updated["scores"]["test"][0]
+
+            assert row["spearman"] == 1.0
+            assert row["kendall"] == 1.0
+            assert row["n_models"] == 3
+            assert row["p_permutation"] is not None
+            assert str(result_path) in out
+    finally:
+        gv.fetch_truth = original_fetch
+
+    print("  rank agreement API ok")
+
+
+
+def test_rank_agreement_mteb_fallback():
+    import sys
+    import types
+
+    import gym.validate as gv
+
+    calls = []
+
+    class FakeCache:
+        def download_from_remote(self):
+            calls.append("download")
+
+    class FakeTaskResult:
+        task_name = "NFCorpus"
+        scores = {"test": [{"ndcg_at_10": 0.42}]}
+
+        def get_score(self, splits=None, getter=None):
+            assert splits == ["test"]
+            return getter(self.scores["test"][0])
+
+    class FakeModelResult:
+        task_results = [FakeTaskResult()]
+
+    def fake_get_tasks(tasks):
+        assert tasks == ["NFCorpus"]
+        return [object()]
+
+    def fake_get_model_meta(model):
+        assert model == "org/model"
+        calls.append("meta")
+        return ("meta", model)
+
+    def fake_get_model(model):
+        raise AssertionError("get_model fallback should not be needed")
+
+    def fake_evaluate(model, task, **kwargs):
+        assert model == ("meta", "org/model")
+        assert kwargs["overwrite_strategy"] == "only-missing"
+        assert kwargs["show_progress_bar"] is False
+        assert isinstance(kwargs["cache"], FakeCache)
+        calls.append("evaluate")
+        return FakeModelResult()
+
+    fake_mteb = types.SimpleNamespace(
+        ResultCache=FakeCache,
+        get_tasks=fake_get_tasks,
+        get_model_meta=fake_get_model_meta,
+        get_model=fake_get_model,
+        evaluate=fake_evaluate,
+    )
+
+    old_mteb = sys.modules.get("mteb")
+    sys.modules["mteb"] = fake_mteb
+    try:
+        out = gv.fetch_truth(["org/model"], task="NFCorpus", split="test")
+        assert out == {"org/model": 42.0}
+        assert calls == ["download", "meta", "evaluate"]
+    finally:
+        if old_mteb is None:
+            sys.modules.pop("mteb", None)
+        else:
+            sys.modules["mteb"] = old_mteb
+
+    print("  rank agreement MTEB fallback ok")
+
+def test_corpus_control_resolution():
+    import os
+
+    from gym.config import GymConfig
+    from gym.gym import Gym
+
+    old_cap = os.environ.get("GYM_MAX_CORPUS_DOCS")
+    old_inject = os.environ.get("GYM_INJECT_QRELS_DOCS")
+
+    gym = object.__new__(Gym)
+
+    try:
+        # Legacy behavior: environment variables still resolve when config is None.
+        os.environ["GYM_MAX_CORPUS_DOCS"] = "123"
+        os.environ["GYM_INJECT_QRELS_DOCS"] = "test"
+        gym.cfg = GymConfig()
+
+        assert gym._corpus_cap() == 123
+        assert gym._inject_qrels_docs() == "test"
+
+        # Explicit config must take precedence over the legacy environment.
+        gym.cfg = GymConfig(corpus_cap=456, inject_qrels_docs="dev")
+
+        assert gym._corpus_cap() == 456
+        assert gym._inject_qrels_docs() == "dev"
+
+        # Injection must participate in cache identity when a cap is active.
+        gym.gen_client = type("Client", (), {"model": "generator"})()
+        hash_dev = gym._query_config_hash()
+        gym.cfg.inject_qrels_docs = "test"
+        hash_test = gym._query_config_hash()
+        assert hash_dev != hash_test
+
+    finally:
+        if old_cap is None:
+            os.environ.pop("GYM_MAX_CORPUS_DOCS", None)
+        else:
+            os.environ["GYM_MAX_CORPUS_DOCS"] = old_cap
+
+        if old_inject is None:
+            os.environ.pop("GYM_INJECT_QRELS_DOCS", None)
+        else:
+            os.environ["GYM_INJECT_QRELS_DOCS"] = old_inject
+
+    print("  corpus control resolution ok")
+
+
 if __name__ == "__main__":
     print("Running MTEB Gym smoke tests...\n")
     test_json_extraction()
@@ -330,4 +607,10 @@ if __name__ == "__main__":
     test_winless_model_ranks_last()
     test_corpus_fingerprint_content_sensitive()
     test_matchup_resume_from_jsonl()
+    test_repro_helpers()
+    test_result_helpers()
+    test_unified_gym_api()
+    test_rank_agreement_api()
+    test_rank_agreement_mteb_fallback()
+    test_corpus_control_resolution()
     print("\nAll smoke tests passed.")

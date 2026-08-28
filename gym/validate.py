@@ -17,9 +17,95 @@ from pathlib import Path
 
 import numpy as np
 
+BM25_NDCG = {
+    "NFCorpus": 32.1,
+    "SciFact": 68.63,
+    "FiQA2018": 25.14,
+    "ArguAna": 49.29,
+}
+
+
+def fetch_truth(
+    models: list[str],
+    task: str = "NFCorpus",
+    split: str = "test",
+) -> dict[str, float]:
+    """Load official MTEB nDCG@10 scores, evaluating cache misses via MTEB."""
+    import mteb
+
+    out: dict[str, float] = {}
+
+    # BM25 is a reference anchor rather than an embedding model in MTEB.
+    if "bm25" in models and task in BM25_NDCG:
+        out["bm25"] = BM25_NDCG[task]
+
+    # Mirror the normal MTEB evaluation path: populate the local cache from the
+    # official results repository, then evaluate only task/model cache misses.
+    cache = mteb.ResultCache()
+    try:
+        cache.download_from_remote()
+    except Exception:
+        # A remote-cache failure should not prevent using an existing local
+        # cache or evaluating the model directly.
+        pass
+
+    task_obj = next(iter(mteb.get_tasks(tasks=[task])), None)
+    if task_obj is None:
+        return out
+
+    for model in models:
+        if model == "bm25" or "/" not in model:
+            continue
+
+        try:
+            # ModelMeta lets mteb.evaluate inspect the cache before loading
+            # model weights. Fall back to get_model for unregistered models.
+            try:
+                model_ref = mteb.get_model_meta(model)
+            except Exception:
+                model_ref = mteb.get_model(model)
+
+            result = mteb.evaluate(
+                model_ref,
+                task_obj,
+                cache=cache,
+                overwrite_strategy="only-missing",
+                show_progress_bar=False,
+            )
+
+            task_result = next(
+                (r for r in result.task_results if r.task_name == task),
+                None,
+            )
+            if task_result is None or not task_result.scores:
+                continue
+
+            if split in task_result.scores:
+                score_split = split
+            elif "test" in task_result.scores:
+                score_split = "test"
+            else:
+                score_split = next(iter(task_result.scores))
+
+            score = task_result.get_score(
+                splits=[score_split],
+                getter=lambda scores: scores["ndcg_at_10"],
+            )
+            out[model] = round(float(score) * 100, 2)
+        except Exception:
+            continue
+
+    return out
+
+
 
 def _load_gym(path: str) -> dict[str, float]:
+    """Load ratings from either legacy leaderboard.json or standardized results."""
     data = json.loads(Path(path).read_text())
+
+    if "ratings" in data:
+        return {m["model"]: m["rating"] for m in data["ratings"]}
+
     return {m["name"]: m["rating"] for m in data["models"]}
 
 
@@ -89,6 +175,75 @@ def correlate(gym_ratings: dict[str, float],
         "gym_ranking": [m for m, _ in sorted(gym_ratings.items(), key=lambda x: -x[1]) if m in shared],
         "truth_ranking": [m for m, _ in sorted(ground_truth.items(), key=lambda x: -x[1]) if m in shared],
     }
+
+
+
+def rank_agreement(
+    results_dir: str | Path,
+    *,
+    bootstrap: int = 1000,
+    seed: int = 0,
+) -> dict[str, dict]:
+    """Compare standardized Gym rankings with official MTEB nDCG@10 scores."""
+    root = Path(results_dir)
+
+    if root.is_file():
+        paths = [root]
+    else:
+        paths = sorted(root.rglob("*.json"))
+
+    out: dict[str, dict] = {}
+
+    for result_path in paths:
+        data = json.loads(result_path.read_text())
+
+        # Skip legacy/cache JSON files; this API operates on standardized results.
+        if "task_name" not in data or "ratings" not in data or "scores" not in data:
+            continue
+
+        task = data["task_name"]
+        ratings = {m["model"]: m["rating"] for m in data["ratings"]}
+        models = list(ratings)
+
+        score_splits = data.get("scores", {})
+        if not score_splits:
+            continue
+
+        split = next(iter(score_splits))
+        rows = score_splits.get(split) or []
+        if not rows:
+            continue
+
+        truth = fetch_truth(models, task=task, split=split)
+        agreement = correlate(
+            ratings,
+            truth,
+            bootstrap=bootstrap,
+            seed=seed,
+        )
+
+        if "error" in agreement:
+            out[str(result_path)] = agreement
+            continue
+
+        lo, hi = agreement["spearman_ci95"]
+        row = rows[0]
+        row["main_score"] = agreement["spearman_rho"]
+        row["spearman"] = agreement["spearman_rho"]
+        row["spearman_ci_low"] = lo
+        row["spearman_ci_high"] = hi
+        row["kendall"] = agreement["kendall_tau"]
+        row["p_permutation"] = agreement["spearman_p_exact"]
+        row["n_models"] = agreement["n_models"]
+
+        # Definitions pending confirmation from Adnan.
+        row.setdefault("spearman_top10", None)
+        row.setdefault("kendall_ap", None)
+
+        result_path.write_text(json.dumps(data, indent=2))
+        out[str(result_path)] = agreement
+
+    return out
 
 
 def report(gym_path: str, ground_truth: dict[str, float], **kw) -> dict:

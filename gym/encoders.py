@@ -23,6 +23,7 @@ Two things every previous version got wrong, and why they mattered:
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 
@@ -101,6 +102,21 @@ def _shim_transformers5_for_jina() -> None:
             setattr(PretrainedConfig, _attr, _default)
 
 
+def _cap_doc_chars(texts):
+    """Optional encode-time character cap (GYM_MAX_DOC_CHARS).
+
+    Giant-corpus documents can run to ~46k tokens; models truncate internally
+    at their max sequence length anyway, but several encode paths materialize
+    quadratic attention over the full tokenized length first (observed as
+    100-256GB allocations). Capping characters before tokenization bounds
+    every path. Applied at encode time only, so corpus fingerprints and cache
+    keys are unchanged.
+    """
+    cap = int(os.environ.get("GYM_MAX_DOC_CHARS", "0") or 0)
+    if not cap:
+        return texts
+    return [t[:cap] for t in texts]
+
 @dataclass
 class PromptTemplate:
     """How a given model wants queries and documents wrapped before encoding."""
@@ -143,6 +159,10 @@ _REGISTRY: list[tuple[str, PromptTemplate]] = [
         query="Instruct: Given a search query, retrieve relevant passages\nQuery: {text}",
         document="{text}")),
     # --- explicitly symmetric models: no prefix ---
+    # --- stella_en_v5 (NovaSearch): s2p_query instruction on queries, bare passages ---
+    (r"stella", PromptTemplate(query="Instruct: Given a web search query, retrieve relevant passages that answer the query.\nQuery: {text}", document="{text}")),
+    # --- inf-retriever-v1 (infly, gte-Qwen2-instruct heritage): Instruct/Query on queries ---
+    (r"inf-retriever", PromptTemplate(query="Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: {text}", document="{text}")),
     (r"(all-minilm|all-mpnet|jina|sentence-t5)", PromptTemplate()),
 ]
 
@@ -193,9 +213,58 @@ class Encoder:
             from sentence_transformers import SentenceTransformer
             # trust_remote_code: nomic / gte-Qwen / jina ship custom modeling
             # code and fail to load without it (mteb passes it for these too).
-            self._model = SentenceTransformer(
-                self.model_name, device=self._device, trust_remote_code=True
-            )
+            # Load in bf16 on GPU: the SentenceTransformer default is fp32,
+            # which for 7B-class models means ~30GB weights plus a cast
+            # transient -- gte-Qwen2-7B OOMs an empty 80GB GPU this way even
+            # in an isolated process. The mteb path serves these models in
+            # bf16; match it. (fp32 kept on CPU, where bf16 is slow.)
+            _kw = {}
+            try:
+                import torch as _t
+                if _t.cuda.is_available():
+                    # sdpa is memory-linear; the eager path materializes the
+                    # full causal mask, which on long documents is a single
+                    # 100-256GB allocation for Mistral/Qwen2-arch 7B encoders
+                    # (observed on Touche, TRECCOVID, FEVER). Models that do
+                    # not accept the kwarg raise immediately and loudly.
+                    _kw = {"model_kwargs": {
+                        "torch_dtype": _t.bfloat16,
+                        "attn_implementation": "sdpa",
+                    }}
+            except Exception:
+                pass
+            try:
+                self._model = SentenceTransformer(
+                    self.model_name, device=self._device, trust_remote_code=True,
+                    **_kw
+                )
+            except ValueError as _sdpa_err:
+                # Some custom-code architectures (e.g. Alibaba's NewModel behind
+                # gte-base-en-v1.5) do not support sdpa and refuse to load with
+                # the kwarg. Eager is safe here because max_seq_length is capped
+                # below, which bounds the eager mask to ~1GB.
+                if "scaled_dot_product" not in str(_sdpa_err):
+                    raise
+                logging.getLogger(__name__).warning(
+                    "%s does not support sdpa; retrying with default attention.",
+                    self.model_name)
+                _kw.get("model_kwargs", {}).pop("attn_implementation", None)
+                self._model = SentenceTransformer(
+                    self.model_name, device=self._device, trust_remote_code=True,
+                    **_kw
+                )
+            # The fallback must truncate: some ST configs leave max_seq_length
+            # effectively unbounded, so a single ~46k-token document builds a
+            # 128-256GB attention mask (observed with e5-mistral on FEVER) and
+            # produces meaningless beyond-training-length embeddings besides.
+            # mteb-path models truncate to their configured lengths; match it.
+            cap = int(os.environ.get("GYM_MAX_SEQ", "4096"))
+            try:
+                cur = getattr(self._model, "max_seq_length", None)
+                if cur is None or int(cur) > cap:
+                    self._model.max_seq_length = cap
+            except Exception:
+                self._model.max_seq_length = cap
         return self._model
 
     def _encode(self, texts: list[str]) -> np.ndarray:
@@ -213,6 +282,7 @@ class Encoder:
         return self._encode([self.template.wrap_query(t) for t in texts])
 
     def encode_documents(self, texts: list[str]) -> np.ndarray:
+        texts = _cap_doc_chars(texts)
         return self._encode([self.template.wrap_document(t) for t in texts])
 
 
@@ -221,30 +291,73 @@ class MTEBEncoder:
     ModelMeta (as an official MTEB run would) instead of _REGISTRY above."""
 
     def __init__(self, model_name: str, task_name: str, split: str = "test",
-                 subset: str = "default", batch_size: int = 32):
+                 subset: str = "default", batch_size: int | None = None):
         self.model_name = model_name
         self.task_name = task_name
         self.split = split
         self.subset = subset
-        self.batch_size = batch_size
+        # GYM_ENCODE_BATCH: long-document corpora (RTEB legal/finance filings run to
+        # tens of thousands of tokens) OOM 7-8B encoders at batch 32; tiny corpora
+        # don't need throughput, so the launcher can dial this down per campaign.
+        self.batch_size = batch_size if batch_size is not None else int(
+            os.environ.get("GYM_ENCODE_BATCH", "32"))
         self._model = None
         self._task_meta = None
 
     @property
     def cache_name(self) -> str:
-        # same model encoded with different prompts must not share a cache entry
+        # same model encoded with different prompts must not share a cache entry;
+        # a lazy-load fallback (below) switches to the builtin-Encoder key so the
+        # two paths never mix cached embeddings.
+        if getattr(self, "_fallback", None) is not None:
+            return self.model_name
         return f"{self.model_name}+mteb"
 
     def _ensure_model(self):
-        if self._model is None:
+        if self._model is None and getattr(self, "_fallback", None) is None:
             if "jina" in self.model_name.lower():
                 _shim_transformers5_for_jina()
             import mteb
-            self._model = mteb.get_model(self.model_name)
-            self._task_meta = mteb.get_tasks(tasks=[self.task_name])[0].metadata
+            try:
+                self._model = mteb.get_model(self.model_name)
+                self._task_meta = mteb.get_tasks(tasks=[self.task_name])[0].metadata
+            except Exception as e:  # noqa: BLE001
+                # make_encoder's try only covers get_model_meta; the real load
+                # happens HERE at encode time, so without this fallback one
+                # unloadable model kills the whole tournament mid-run (n17
+                # forensics lesson). Builtin Encoder passes trust_remote_code
+                # and applies the _REGISTRY prompt templates.
+                logging.getLogger(__name__).warning(
+                    "MTEBEncoder lazy-load failed for %s (%s); falling back to "
+                    "builtin Encoder (trust_remote_code, registry prompts).",
+                    self.model_name, e)
+                self._model = None
+                fallback_pending = True
+            else:
+                fallback_pending = False
+            if fallback_pending:
+                # Free the partially-loaded weights BEFORE the fallback loads its
+                # own instance. This must happen OUTSIDE the except block: while
+                # the handler is live, the traceback frames still reference the
+                # half-constructed model, so gc.collect() inside the handler
+                # cannot free it (observed: gte-Qwen2-7B still double-loading to
+                # ~69GB with an in-handler cleanup). Out here the exception is
+                # cleared and the weights are actually collectable.
+                try:
+                    import gc, torch
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
+                self._fallback = Encoder(self.model_name)
 
     def _encode(self, texts: list[str], is_query: bool) -> np.ndarray:
         self._ensure_model()
+        if getattr(self, "_fallback", None) is not None:
+            if is_query:
+                return self._fallback.encode_queries(texts)
+            return self._fallback.encode_documents(texts)
         from datasets import Dataset
         from mteb._create_dataloaders import create_dataloader  # no public equivalent yet
         from mteb.types import PromptType
@@ -266,18 +379,25 @@ class MTEBEncoder:
         return self._encode(texts, is_query=True)
 
     def encode_documents(self, texts: list[str]) -> np.ndarray:
+        texts = _cap_doc_chars(texts)
         return self._encode(texts, is_query=False)
 
 
 def make_encoder(model_name: str, task_name: str, split: str = "test",
+                 subset: str = "default",
                  use_mteb: bool = True) -> "Encoder | MTEBEncoder":
-    """MTEBEncoder when mteb 2.x knows the model, else the builtin Encoder."""
+    """MTEBEncoder when mteb 2.x knows the model, else the builtin Encoder.
+
+    `subset` is the resolved hf_subset the corpus was read from (Gym threads the
+    same key it loaded), so multi-subset tasks are not all mis-encoded as the
+    'default' subset.
+    """
     if use_mteb:
         try:
             import mteb
             import mteb._create_dataloaders  # noqa: F401 — absent on mteb 1.x
             mteb.get_model_meta(model_name)  # raises if unknown to the registry
-            return MTEBEncoder(model_name, task_name, split=split)
+            return MTEBEncoder(model_name, task_name, split=split, subset=subset)
         except Exception as e:  # noqa: BLE001
             logging.getLogger(__name__).warning(
                 "mteb encoder unavailable for %s (%s); using builtin prompt registry.",

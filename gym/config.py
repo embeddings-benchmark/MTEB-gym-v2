@@ -11,6 +11,16 @@ class GymConfig:
     # --- corpus / task ---
     task_name: str = "NFCorpus"
     corpus_split: str = "test"
+    arm: str = "synthetic"
+    models: list[str] = field(default_factory=list)
+    judge: str | None = None
+    generator: str | None = None
+    judge_base_url: str | None = None
+    generator_base_url: str | None = None
+    # Explicit experiment-defining corpus controls. None preserves the legacy
+    # environment-variable behavior until Gym resolves them at runtime.
+    corpus_cap: int | None = None
+    inject_qrels_docs: str | None = None
 
     # --- query generation ---
     n_queries: int = 100          # target number of *kept* queries after filtering

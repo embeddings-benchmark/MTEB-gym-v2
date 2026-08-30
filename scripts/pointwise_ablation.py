@@ -80,11 +80,14 @@ def load_corpus(task_name: str) -> dict[str, str]:
 def make_client(judge: str, model_override: str | None, base_url: str | None, mock: bool):
     if mock:
         return MockClient()
+    # The judge model id is experiment-defining state: no baked default.
+    if not model_override:
+        raise SystemExit("--model is required: the exact judge model id (as served)")
     if judge == "claude":
-        return AnthropicClient(model=model_override or "claude-haiku-4-5-20251001")
+        return AnthropicClient(model=model_override)
     if judge == "qwen3":
         return OpenAICompatClient(
-            model=model_override or "Qwen/Qwen3-4B-Instruct-2507",
+            model=model_override,
             base_url=base_url or "http://localhost:8000/v1",
             api_key="EMPTY",
         )

@@ -47,12 +47,15 @@ def _api_key(args):
 def build_judge(args):
     if args.mock:
         return MockClient()
+    # The judge model id is experiment-defining state: no baked default.
+    if not args.model:
+        raise SystemExit("--model is required: the exact judge model id (as served)")
     if args.judge == "qwen3":
-        return OpenAICompatClient(model=args.model or "Qwen/Qwen3-4B-Instruct-2507",
+        return OpenAICompatClient(model=args.model,
                                   base_url=args.base_url, api_key=_api_key(args), extra_body={"chat_template_kwargs": {"enable_thinking": False}})
     if args.judge == "openai":
-        return OpenAICompatClient(model=args.model or "gpt-4o-mini", base_url=args.base_url or "https://api.openai.com/v1", api_key=_api_key(args), extra_body={})
-    return AnthropicClient(model=args.model or "claude-haiku-4-5-20251001")
+        return OpenAICompatClient(model=args.model, base_url=args.base_url or "https://api.openai.com/v1", api_key=_api_key(args), extra_body={})
+    return AnthropicClient(model=args.model)
 
 
 def build_generator(args):
@@ -69,7 +72,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=DEFAULT_MODELS)
     ap.add_argument("--judge", choices=["claude", "qwen3", "openai"], default="claude")
-    ap.add_argument("--model", default=None, help="override judge model id")
+    ap.add_argument("--model", default=None, help="judge model id (required unless --mock)")
     ap.add_argument("--base-url", default="http://localhost:8000/v1")
     ap.add_argument("--mock", action="store_true")
     ap.add_argument("--task", default="NFCorpus")

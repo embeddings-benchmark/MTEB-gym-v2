@@ -62,7 +62,7 @@ class AnthropicClient:
     `model=` if you want a stronger judge for the validation table.
     """
 
-    def __init__(self, model: str = "claude-haiku-4-5-20251001",
+    def __init__(self, model: str,
                  max_tokens: int = 512, api_key: str | None = None,
                  max_retries: int = 4):
         import anthropic
@@ -106,11 +106,11 @@ class OpenAICompatClient:
     to run a local judge: serve it with vLLM and point base_url at it.
 
         # on the GPU box:
-        vllm serve Qwen/Qwen3-4B-Instruct-2507 --port 8000
+        vllm serve <served-model-id> --port 8000
 
         # in code:
         judge = OpenAICompatClient(
-            model="Qwen/Qwen3-4B-Instruct-2507",
+            model="<served-model-id>",
             base_url="http://localhost:8000/v1",
             api_key="EMPTY",
         )
@@ -163,7 +163,7 @@ class OpenAICompatClient:
 class HFQwen3Client:
     """Qwen3 via huggingface_hub. Handy for a quick try; rate-limited when free."""
 
-    def __init__(self, model: str = "Qwen/Qwen3-4B-Instruct-2507",
+    def __init__(self, model: str,
                  token: str | None = None, max_tokens: int = 512):
         from huggingface_hub import InferenceClient
         self.client = InferenceClient(model=model, token=token or os.environ.get("HF_TOKEN"))

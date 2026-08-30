@@ -215,8 +215,6 @@ def build_result_record(
         "corpus_split": cfg.corpus_split,
         "corpus_cap": corpus_cap,
         "inject_qrels_docs": inject_qrels_docs,
-        "max_doc_chars": int(os.environ.get("GYM_MAX_DOC_CHARS", "0") or 0),
-        "max_seq": int(os.environ.get("GYM_MAX_SEQ", "4096")),
         "models": list(models),
     }
     experiment_config["config_hash"] = experiment_config_hash(experiment_config)

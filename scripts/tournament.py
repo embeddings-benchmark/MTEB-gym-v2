@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-N-model round-robin tournament. Defaults to a sub-1B model set comparable to
-Rohan's, plus a BM25 anchor.
+N-model round-robin tournament. Defaults to a sub-1B arena model set
+plus a BM25 anchor.
 
-    # local Qwen3-4B judge (recommended on the GPU box):
+    # judge served locally with vLLM:
     PYTHONPATH=. python3 scripts/tournament.py \
         --judge qwen3 --base-url http://localhost:8000/v1 \
         --n-queries 300 --output results/qwen3_synth
@@ -22,7 +22,7 @@ import os
 from gym import Gym, GymConfig
 from gym.clients import AnthropicClient, MockClient, OpenAICompatClient
 
-# Rohan's original 7 (the open sub-1B set from the arena) + the bm25 anchor.
+# The original 7-model arena subset (open, sub-1B) + the bm25 anchor.
 DEFAULT_MODELS = [
     "bm25",
     "sentence-transformers/all-MiniLM-L6-v2",

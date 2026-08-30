@@ -43,7 +43,7 @@ class GymConfig:
                                   # order-preserving, so worker count never
                                   # changes the generated query set
 
-    # --- query filtering (Rohan's key lever) ---
+    # --- query filtering (the biggest correlation lever) ---
     filter_queries: bool = True
     filter_min_score: int = 3     # LLM quality score 1-5; keep >= this
     dedup_threshold: float = 0.92 # cosine-dup cutoff on a cheap encoder

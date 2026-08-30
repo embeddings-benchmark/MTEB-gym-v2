@@ -6,7 +6,7 @@ run, re-judges each model's results independently (1-5 score), then compares
 the pointwise ranking against the pairwise Bradley-Terry ranking.
 
 If both produce the same model ordering, pointwise is a valid O(n) substitute
-for pairwise at O(n^2) cost — which is the hypothesis from Tejas's lit review.
+for pairwise at O(n^2) cost.
 
 Usage:
     python scripts/pointwise_ablation.py \

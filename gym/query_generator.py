@@ -1,20 +1,17 @@
 """
 Synthetic query generation + filtering.
 
-The generation idea (unchanged): show the LLM a few random corpus docs and ask
-for a realistic search query that is *answerable from the corpus* but *not a
-copy* of the seeded docs, so retrieval is non-trivial.
+Generation: show the LLM a few random corpus docs and ask for a realistic
+search query answerable from the corpus but not a copy of the seeded docs.
 
-The new part is the FILTER. Rohan found that the single biggest lever on
-correlation with ground truth was throwing away bad synthetic queries. A query
-is "bad" if it's too short/long, not a real information need, trivially answered
-by keyword overlap, or a near-duplicate of another query. We apply three gates:
+The biggest lever on ground-truth correlation is FILTERING bad queries (too
+short/long, not a real information need, trivially keyword-matched,
+near-duplicate). Three gates, cheapest first so LLM calls are spent only on
+plausible queries:
 
-  1. heuristic   — length + obvious degeneracy, free
-  2. LLM quality — 1-5 score for "is this a good retrieval query?", keep >= min
-  3. dedup       — drop near-duplicates by cosine on a cheap encoder
-
-Order matters: cheap gates first so we only spend LLM calls on plausible queries.
+  1. heuristic   -- length + obvious degeneracy, free
+  2. LLM quality -- 1-5 "is this a good retrieval query?", keep >= min
+  3. dedup       -- near-duplicates by cosine on a cheap encoder
 """
 
 from __future__ import annotations

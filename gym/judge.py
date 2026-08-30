@@ -1,27 +1,15 @@
 """
 Pairwise judge.
 
-What changed and why it matters for the tie-rate problem
---------------------------------------------------------
-The old judge ran each pair twice (A first, B first) and, on any disagreement,
-*downgraded to a tie*. On NFCorpus that produced ~85% ties — almost all the
-signal got thrown away, so the ELO gap was tiny and noisy.
+Each pair is judged in both presentation orders and scored fractionally:
 
-Two models are rarely "equal"; more often the judge is order-sensitive. So
-instead of collapsing disagreements to ties, we record a FRACTIONAL outcome per
-query:
+    score_A = mean over the two orders of {win: 1, tie: 0.5, loss: 0}
 
-    score_A = mean over the two orders of {win:1, tie:0.5, loss:0}
-
-A clean win in both orders -> 1.0. A split (A wins one order, loses the flipped
-one) -> 0.5: a *soft* tie that still carries the magnitude into Bradley-Terry,
-rather than a hard tie that contributes nothing. Across many queries these
-fractions integrate into a clean ranking even when any single pair is ambiguous.
-
-We also surface POSITION BIAS as a first-class diagnostic (Rohan's Fig-5 issue):
-`a_first_rate` is how often the judge picks whichever system was shown first.
-0.5 is unbiased; the team saw ~0.67 at depth 1. Flipping positions cancels it in
-the score; the metric just lets you see how bad it is for a given judge.
+A split across orders becomes 0.5 -- a soft tie that still carries magnitude
+into Bradley-Terry instead of discarding the signal as a hard tie. Position
+bias is surfaced as `a_first_rate` (how often the judge picks whichever system
+was shown first; 0.5 is unbiased). Flipping orders cancels it in the score;
+the metric only makes it visible.
 """
 
 from __future__ import annotations
@@ -106,7 +94,7 @@ def _parse_response(raw: str) -> tuple[str, str, bool]:
     # (EnsembleClient.chat packs them that way). A lone judge that happens to
     # emit a top-level JSON array of objects must NOT be voted as an ensemble:
     # that path drops every dict element and silently returns a parse-failure
-    # tie (the v0.1 tie-flattening bug). Require all-string elements, else fall
+    # tie (the tie-flattening failure mode). Require all-string elements, else fall
     # through to single-object parsing below.
     if isinstance(members, list) and members and all(isinstance(m, str) for m in members):
         from .clients import EnsembleClient
@@ -145,7 +133,7 @@ class Judge:
         parsed_ok is False when the model's output had no usable verdict; we
         still score it as a tie, but it is counted separately so a misbehaving
         judge (refusals, truncation, thinking-mode preambles) cannot silently
-        flatten the leaderboard the way v0.1's hard ties did.
+        flatten the leaderboard into ties.
         """
         msg = [
             {"role": "system", "content": self.system},
@@ -322,18 +310,9 @@ class Judge:
         return (self._parse_failures / self._asks) if self._asks else None
 
 # ---------------------------------------------------------------------------
-# Pointwise judge (ablation vs pairwise)
-# ---------------------------------------------------------------------------
-# Instead of comparing A vs B directly, we score each model's result set
-# independently on a 1-5 scale, then rank models by average score.
-#
-# Cost: O(n * m) calls vs O(n * m^2) for pairwise — linear in queries,
-# not quadratic in model pairs. Tejas's lit review says pointwise matches
-# or beats pairwise on system-ranking correlation, which is the hypothesis
-# we're testing.
-#
-# Output is a dict {model_name: [scores]} — one score per query — which
-# feeds directly into PointwiseRanker.rank() to produce a leaderboard.
+# Pointwise judge (ablation vs pairwise): score each model's result set
+# independently on a 1-5 scale, rank by average. O(n*m) calls vs O(n*m^2);
+# output {model: [scores]} feeds PointwiseRanker.rank().
 # ---------------------------------------------------------------------------
 
 _POINTWISE_SYSTEM = (

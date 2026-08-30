@@ -31,7 +31,7 @@ MTEB_NFCORPUS = {
     "BAAI/bge-large-en-v1.5": 38.06,                   # rev d4aa6901
     "nomic-ai/nomic-embed-text-v1.5": 34.67,
     "mixedbread-ai/mxbai-embed-large-v1": 38.67,       # rev 990580e2
-    # jina-v2 completes Rohan's original 7 (the agreed tournament set)
+    # jina-v2 completes the original 7-model tournament set
     "jinaai/jina-embeddings-v2-base-en": 32.45,        # rev external
 }
 

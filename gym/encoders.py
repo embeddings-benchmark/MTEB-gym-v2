@@ -1,23 +1,13 @@
 """
 Model-aware encoding.
 
-Two things every previous version got wrong, and why they mattered:
+1. PREFIXES. Many embedding models are asymmetric: trained with distinct
+   query/document prefixes (e5 "query: "/"passage: ", bge query instruction,
+   nomic "search_query:"/"search_document:") and silently underperform without
+   them -- enough to invert a head-to-head against a symmetric model.
 
-1. PREFIXES. Many embedding models are *asymmetric*: they were trained with
-   distinct query and document prefixes, and they silently underperform without
-   them. e5 wants "query: " / "passage: ", bge wants a query instruction, nomic
-   wants "search_query:" / "search_document:". If you encode an e5 model with no
-   prefix, its retrieval quality collapses — which is exactly the kind of thing
-   that makes a *stronger* model (e5-small) lose to a weaker one (MiniLM) in a
-   head-to-head. MiniLM/mpnet are symmetric and need no prefix, so they were
-   never penalised. That asymmetry was almost certainly the cause of the
-   "gym says MiniLM > e5-small but MTEB says the opposite" mismatch.
-
-2. NORMALISATION. Cosine similarity = dot product of L2-normalised vectors.
-   Doing the division at query time (q . d / (|q||d|)) on un-normalised vectors
-   invites divide-by-zero / overflow on degenerate rows. We normalise once at
-   encode time and then only ever take dot products. No runtime division, no
-   warnings, and retrieval is a single clean matmul.
+2. NORMALISATION. Vectors are L2-normalised once at encode time, so cosine
+   similarity is a single matmul with no runtime division.
 """
 
 from __future__ import annotations

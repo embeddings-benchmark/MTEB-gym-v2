@@ -1,7 +1,7 @@
 """
 BM25 baseline.
 
-Rohan flagged BM25 as an easy, high-value addition: a lexical anchor every dense
+BM25 is the lexical anchor every dense
 model should beat. If a dense model loses to BM25 in the gym, that's a strong
 smell test that something is wrong (bad prefixes, broken encoding, junk queries).
 
@@ -85,28 +85,13 @@ class BM25Retriever:
 
 
 # --------------------------------------------------------------------------- #
-# ColBERT (late interaction) baseline
+# ColBERT (late interaction) baseline: per-token vectors scored by MaxSim, the
+# non-dense, non-lexical third axis. pylate provides the official colbertv2.0
+# checkpoint; for few-thousand-doc corpora we brute-force MaxSim, padding the
+# corpus token embeddings ONCE (pylate's rank.rerank re-pads the whole corpus
+# per query) and scoring queries in small chunks to bound the einsum
+# intermediate. Heavy imports stay lazy: module imports with zero ML deps.
 # --------------------------------------------------------------------------- #
-#
-# ColBERT is the non-dense, non-lexical third axis: every token gets its own
-# vector and relevance is the sum of per-query-token max similarities (MaxSim),
-# not a single dot product. It is the natural stress test for the gym's "does
-# it under-rank anything that isn't one dense vector?" question that bm25 first
-# raised.
-#
-# pylate (1.6.0) gives us the official colbert-ir/colbertv2.0 checkpoint plus a
-# MaxSim scorer. For a few-thousand-doc corpus (NFCorpus is 3633) we skip the
-# Voyager/PLAID index entirely and brute-force MaxSim over every document.
-#
-# We pad the corpus token embeddings ONCE into a single (N, max_doc_tok, dim)
-# tensor + mask, then score queries in small chunks against it. pylate's own
-# rank.rerank() re-pads the whole corpus inside its per-query loop (rebuilding
-# the full padded tensor N_queries times); scoring against a corpus padded once
-# is the same MaxSim math without that quadratic repad. We keep the query chunk
-# small so the (chunk, N, q_tok, d_tok) einsum intermediate stays bounded.
-#
-# Heavy imports (pylate / torch) stay lazy so this module keeps importing with
-# zero ML deps, exactly like BM25Retriever above.
 
 
 class ColBERTRetriever:

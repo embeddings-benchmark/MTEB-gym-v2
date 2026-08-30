@@ -1,13 +1,9 @@
 """
-Validation = how well does the gym ranking agree with a trusted ranking?
+Validation: how well the gym ranking agrees with a trusted ranking.
 
-This is the whole point of the synthetic-query experiment: if gym rankings from
-synthetic queries correlate with MTEB / Arena rankings as well as Rohan's real
-queries did (rho ~ 0.86), synthetic queries are a viable, scalable substitute.
-
-Reports Spearman rho and Kendall tau, with a bootstrap CI on the correlation so
-you can say whether 0.71 and 0.86 are actually distinguishable given few models
-(they often aren't — exactly Rohan's "noisy, big p-values" caveat).
+Reports Spearman rho and Kendall tau with bootstrap CIs and permutation
+p-values -- correlations over ~25 systems carry wide intervals, so
+significance is reported rather than assumed.
 """
 
 from __future__ import annotations
@@ -236,7 +232,7 @@ def rank_agreement(
         row["p_permutation"] = agreement["spearman_p_exact"]
         row["n_models"] = agreement["n_models"]
 
-        # Definitions pending confirmation from Adnan.
+        # TODO: not yet computed; agree definitions (top-10 restriction, tau_AP) first.
         row.setdefault("spearman_top10", None)
         row.setdefault("kendall_ap", None)
 

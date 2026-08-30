@@ -3,18 +3,14 @@ LLM clients. Every client implements one method:
 
     chat(messages: list[dict], temperature: float = 0.0) -> str
 
-So the generator and judge never care which model is behind it. Clients here:
+so the generator and judge never care which model is behind it:
 
-  MockClient            deterministic, no network — for tests and dry runs
+  MockClient            deterministic, no network -- tests and dry runs
   AnthropicClient       Claude (api.anthropic.com)
   OpenAICompatClient    anything speaking the OpenAI /chat/completions schema:
-                        OpenAI, Together, Fireworks, DeepInfra, or a *local*
-                        vLLM / TGI / Ollama server hosting Qwen3-4B
+                        OpenAI, Together, Fireworks, or a local vLLM/TGI server
   HFQwen3Client         Qwen3 via huggingface_hub InferenceClient (rate-limited)
-  EnsembleClient        majority/median vote over several judges (Adnan's idea)
-
-For the team setup, the recommended judge is Qwen3-4B served locally with vLLM
-(free, fast, reproducible) via OpenAICompatClient pointed at localhost.
+  EnsembleClient        majority/median vote over several judges
 """
 
 from __future__ import annotations
@@ -107,7 +103,7 @@ class AnthropicClient:
 class OpenAICompatClient:
     """
     Talks to any OpenAI /chat/completions endpoint. This is the recommended way
-    to run Qwen3-4B for the team: serve it with vLLM and point base_url at it.
+    to run a local judge: serve it with vLLM and point base_url at it.
 
         # on the GPU box:
         vllm serve Qwen/Qwen3-4B-Instruct-2507 --port 8000
@@ -183,7 +179,7 @@ class HFQwen3Client:
 
 
 # --------------------------------------------------------------------------- #
-# Ensemble (Adnan's suggestion)                                               #
+# Ensemble                                                                    #
 # --------------------------------------------------------------------------- #
 class EnsembleClient:
     """

@@ -2,13 +2,13 @@
 
 from .config import GymConfig
 from .gym import Gym
-from .judge import Judge, Verdict
+from .judge import Judge, Verdict, task_prompt
 from .query_generator import Query, QueryGenerator
 from .scoring import ModelRating, format_leaderboard, rate
 from .validate import correlate, rank_agreement, report
 
 __all__ = [
-    "GymConfig", "Gym", "Judge", "Verdict", "Query", "QueryGenerator",
+    "GymConfig", "Gym", "task_prompt", "Judge", "Verdict", "Query", "QueryGenerator",
     "ModelRating", "format_leaderboard", "rate", "correlate",
     "rank_agreement", "report",
 ]

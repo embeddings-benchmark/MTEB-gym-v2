@@ -93,8 +93,8 @@ def client_model_id(client: Any) -> str | None:
 
 
 def judge_instruction_metadata(cfg: Any) -> dict[str, Any]:
-    """Resolve the judge instruction: env override > config text > the task's
-    own mteb prompt (opt-in) > generic. One path for Judge and the record."""
+    """Resolve the judge instruction: env override > config text > generic.
+    One path for Judge and the record."""
     import os
 
     override = os.environ.get("GYM_JUDGE_INSTR_OVERRIDE") or None
@@ -104,17 +104,6 @@ def judge_instruction_metadata(cfg: Any) -> dict[str, Any]:
     if getattr(cfg, "judge_instruction", None):
         return {"instruction": cfg.judge_instruction,
                 "instruction_source": "config:judge_instruction"}
-    if (getattr(cfg, "judge_instruction_from_task", True)
-            and not getattr(cfg, "corpus_path", None)):
-        import mteb
-
-        prompt = mteb.get_tasks(tasks=[cfg.task_name])[0].metadata.prompt
-        text = prompt if isinstance(prompt, str) else (prompt or {}).get("query")
-        if text:
-            return {"instruction": text,
-                    "instruction_source": "mteb:TaskMetadata.prompt"}
-        # no prompt on the task -> generic, mirroring mteb's fallback to
-        # unprefixed encoding (recorded as generic in the result record)
     return {"instruction": None, "instruction_source": None}
 
 

@@ -597,25 +597,20 @@ def test_judge_instruction_resolution():
     # no instruction -> generic prompt byte-identical: cache preservation rests on this
     assert judge_system() == _JUDGE_SYSTEM
     assert "refute" in judge_system("Find docs that refute the claim")
-    # False = control arm / reproducing generic runs; local corpora skip mteb
-    assert judge_instruction_metadata(
-        GymConfig(task_name="ArguAna", judge_instruction_from_task=False)) == {
+    # generic unless the config states a criterion
+    assert judge_instruction_metadata(GymConfig(task_name="ArguAna")) == {
         "instruction": None, "instruction_source": None}
-    assert judge_instruction_metadata(
-        GymConfig(task_name="x", corpus_path="./docs")) == {
-        "instruction": None, "instruction_source": None}
+    meta = judge_instruction_metadata(
+        GymConfig(task_name="ArguAna", judge_instruction="Find docs that refute"))
+    assert meta["instruction_source"] == "config:judge_instruction"
     try:
         import mteb
     except ImportError:
         print("  instruction: mteb absent, prompt checks skipped")
         return
-    # default: the task's own mteb prompt
-    meta = judge_instruction_metadata(GymConfig(task_name="ArguAna"))
-    assert meta["instruction_source"] == "mteb:TaskMetadata.prompt"
-    assert "refute the claim" in meta["instruction"]
-    # a task with no mteb prompt falls back to generic, like mteb does
-    assert judge_instruction_metadata(GymConfig(task_name="AILACasedocs")) == {
-        "instruction": None, "instruction_source": None}
+    from gym.judge import task_prompt
+    assert "refute the claim" in task_prompt("ArguAna")
+    assert task_prompt("AILACasedocs") is None
 
 def test_top10_and_tau_ap():
     import numpy as np

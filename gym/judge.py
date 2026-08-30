@@ -36,6 +36,17 @@ _JUDGE_SYSTEM = (
     "\"confidence\": \"low\"|\"medium\"|\"high\", \"reasoning\": \"one sentence\"}"
 )
 
+def task_prompt(task_name: str) -> str | None:
+    """The task's own mteb prompt text, for passing as cfg.judge_instruction
+    when a run should judge by the task's stated criterion. None when the
+    task defines no prompt. Beware: some task families (e.g. BRIGHT) carry
+    encoder prefixes here, not task definitions."""
+    import mteb
+
+    prompt = mteb.get_tasks(tasks=[task_name])[0].metadata.prompt
+    return prompt if isinstance(prompt, str) else (prompt or {}).get("query")
+
+
 def judge_system(instruction: str | None = None) -> str:
     """Generic judge prompt, with a task instruction injected when given.
     Resolution lives in results.judge_instruction_metadata (env override >

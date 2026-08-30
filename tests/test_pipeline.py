@@ -617,6 +617,25 @@ def test_judge_instruction_resolution():
     assert judge_instruction_metadata(GymConfig(task_name="AILACasedocs")) == {
         "instruction": None, "instruction_source": None}
 
+def test_top10_and_tau_ap():
+    import numpy as np
+    from gym.validate import correlate, _tau_ap
+    rng = np.random.default_rng(0)
+    truth = {f"m{i}": float(i) for i in range(25)}
+    # strong models (15..24) shuffled among themselves, weak ordered: aggregate
+    # rho stays high, top-10 agreement collapses
+    top = list(range(15, 25)); rng.shuffle(top)
+    gym_scores = {f"m{i}": float(v) for i, v in zip(range(15, 25), top)}
+    gym_scores.update({f"m{i}": float(i) for i in range(15)})
+    out = correlate(gym_scores, truth, bootstrap=0)
+    assert out["spearman_rho"] > 0.85
+    assert abs(out["spearman_top10"]) < 0.6
+    # tau_ap sanity: identity = 1, reversal = -1
+    a = np.arange(10, dtype=float)
+    assert _tau_ap(a, a) == 1.0
+    assert _tau_ap(-a, a) == -1.0
+
+
 def test_local_corpus():
     import tempfile
     from gym import Gym, GymConfig
@@ -659,5 +678,6 @@ if __name__ == "__main__":
     test_rank_agreement_mteb_fallback()
     test_corpus_control_resolution()
     test_judge_instruction_resolution()
+    test_top10_and_tau_ap()
     test_local_corpus()
     print("\nAll smoke tests passed.")

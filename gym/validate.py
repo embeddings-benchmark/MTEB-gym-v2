@@ -132,6 +132,20 @@ def _exact_permutation_p(g: np.ndarray, t: np.ndarray, max_n: int = 8) -> float 
     return hits / total
 
 
+def _tau_ap(g: np.ndarray, t: np.ndarray) -> float:
+    """AP rank correlation (Yilmaz et al. 2008): Kendall's tau weighted toward
+    the top of the reference ranking. Reference = official scores t; candidate
+    = gym ratings g. 1 = identical order, -1 = reversed."""
+    order = np.argsort(-t)          # reference ranking, best first
+    g_ord = g[order]
+    n = len(g_ord)
+    total = 0.0
+    for i in range(1, n):
+        above = g_ord[:i]
+        total += float(np.sum(above > g_ord[i])) / i
+    return float(2.0 * total / (n - 1) - 1.0)
+
+
 def correlate(gym_ratings: dict[str, float],
               ground_truth: dict[str, float],
               bootstrap: int = 1000, seed: int = 0) -> dict:
@@ -161,12 +175,24 @@ def correlate(gym_ratings: dict[str, float],
             boots.append(r)
     ci = (float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5))) if boots else (None, None)
 
+    # Restricted to the OFFICIALLY top-k models: does the ranking still hold
+    # among the good candidates, where a selection decision is actually made,
+    # or does the aggregate rho come from separating strong from weak?
+    top10 = None
+    if len(shared) >= 12:
+        top = np.argsort(-t)[:10]
+        r10, _ = spearmanr(g[top], t[top])
+        if not np.isnan(r10):
+            top10 = float(r10)
+
     return {
         "n_models": len(shared),
         "models": shared,
         "spearman_rho": float(rho), "spearman_p": float(p_rho),
         "spearman_p_exact": p_exact,  # exact permutation p, None if n > 8
         "kendall_tau": float(tau), "kendall_p": float(p_tau),
+        "spearman_top10": top10,      # None when fewer than 12 anchored models
+        "kendall_ap": _tau_ap(g, t),  # top-weighted, official ranking as reference
         "spearman_ci95": ci,
         "gym_ranking": [m for m, _ in sorted(gym_ratings.items(), key=lambda x: -x[1]) if m in shared],
         "truth_ranking": [m for m, _ in sorted(ground_truth.items(), key=lambda x: -x[1]) if m in shared],
@@ -232,9 +258,8 @@ def rank_agreement(
         row["p_permutation"] = agreement["spearman_p_exact"]
         row["n_models"] = agreement["n_models"]
 
-        # TODO: not yet computed; agree definitions (top-10 restriction, tau_AP) first.
-        row.setdefault("spearman_top10", None)
-        row.setdefault("kendall_ap", None)
+        row["spearman_top10"] = agreement.get("spearman_top10")
+        row["kendall_ap"] = agreement.get("kendall_ap")
 
         result_path.write_text(json.dumps(data, indent=2))
         out[str(result_path)] = agreement

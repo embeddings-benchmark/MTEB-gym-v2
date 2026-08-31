@@ -110,13 +110,20 @@ gym/
 
 ## Testing
 
-Run the offline smoke suite with:
+Run offline tests:
 
 ```bash
-PYTHONPATH=. python3 tests/test_pipeline.py
+python tests/test_pipeline.py
 ```
 
-The tests cover the end-to-end pipeline, reproducibility helpers, standardized result artifacts, corpus controls, caching/resume behavior, the unified Gym API, and MTEB rank-agreement fallback behavior.
+The tests cover:
+- end-to-end pipeline
+- reproducibility helpers
+- standardized result artifacts
+- corpus controls
+- caching/resume behavior
+- unified Gym API
+- MTEB rank-agreement fallback behavior
 
 ## Citation
 

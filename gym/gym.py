@@ -477,15 +477,13 @@ class Gym:
             logger.info("pair %d/%d: %s vs %s", i, len(pairs), a, b)
             all_verdicts.extend(self.matchup(a, b, corpus, queries))
 
-        ratings = rate(all_verdicts, method=self.cfg.method,
-                       base=self.cfg.elo_base, scale=self.cfg.elo_scale,
+        ratings = rate(all_verdicts, base=self.cfg.elo_base, scale=self.cfg.elo_scale,
                        bootstrap=self.cfg.bootstrap_samples, seed=self.cfg.seed)
         self.leaderboard_str = format_leaderboard(ratings)
 
         out = {
             "task": self.cfg.task_name,
             "n_queries": len(queries),
-            "method": self.cfg.method,
             # position bias recomputed from the persisted verdicts, so cached
             # and resumed runs report the true rate
             "a_first_rate": _a_first_rate_from(all_verdicts),

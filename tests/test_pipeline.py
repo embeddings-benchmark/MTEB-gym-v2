@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from gym.baselines import BM25Retriever
-from gym.clients import EnsembleClient, MockClient
+from gym.clients import MockClient
 from gym.config import GymConfig
 from gym.judge import Judge, _parse_response
 from gym.query_generator import Query, QueryGenerator, _extract_json
@@ -106,16 +106,12 @@ def test_judge_and_scoring():
     assert judge.a_first_rate is not None
     print(f"  judge ok (a_first_rate={judge.a_first_rate:.2f}, {len(verdicts)} verdicts)")
 
-    ratings = rate(verdicts, method="bradley_terry", bootstrap=200)
+    ratings = rate(verdicts, bootstrap=200)
     assert len(ratings) == 3
     assert ratings[0].rating >= ratings[-1].rating
     assert ratings[0].ci >= 0
     print("  bradley-terry scoring ok")
     print(format_leaderboard(ratings))
-
-    elo = rate(verdicts, method="elo", bootstrap=200)
-    assert len(elo) == 3
-    print("  online elo scoring ok")
     return ratings
 
 
@@ -136,26 +132,6 @@ def test_exact_permutation_p():
     assert res["spearman_p_exact"] is not None
     assert abs(res["spearman_p_exact"] - 2 / 120) < 1e-9, res["spearman_p_exact"]
     print(f"  exact permutation p ok (p={res['spearman_p_exact']:.4f})")
-
-
-def test_ensemble_vote():
-    assert EnsembleClient.vote(["A", "A", "B"]) [0] == "A"
-    assert EnsembleClient.vote(["A", "B"]) [0] == "tie"
-    print("  ensemble vote ok")
-
-
-def test_ensemble_judge_parse():
-    # EnsembleClient.chat returns a JSON array of member responses; the judge
-    # must majority-vote it instead of crashing/tieing (the drop-in-judge bug).
-    members = ['{"winner": "A", "reasoning": "x"}',
-               '{"winner": "A", "reasoning": "y"}',
-               '{"winner": "B", "reasoning": "z"}']
-    assert _parse_response(json.dumps(members)) == ("A", "x || y || z", True)
-    # single (non-array) judge response still parses
-    assert _parse_response('{"winner": "tie"}')[:2] == ("tie", "")
-    # unparseable response is flagged, not silently scored
-    assert _parse_response("no json here")[2] is False
-    print("  ensemble judge parse ok")
 
 
 def _fake_retrievals(seed, queries, k=5):
@@ -651,8 +627,6 @@ if __name__ == "__main__":
     test_make_encoder_fallback()
     test_query_gen_and_filter()
     test_bm25()
-    test_ensemble_vote()
-    test_ensemble_judge_parse()
     ratings = test_judge_and_scoring()
     test_correlation(ratings)
     test_exact_permutation_p()

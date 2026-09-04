@@ -203,7 +203,6 @@ def build_result_record(
         "dedup_threshold": cfg.dedup_threshold,
         "top_k": cfg.top_k,
         "seed": cfg.seed,
-        "method": cfg.method,
         "bootstrap_samples": cfg.bootstrap_samples,
         "flip_positions": cfg.flip_positions,
         "use_mteb_models": cfg.use_mteb_models,

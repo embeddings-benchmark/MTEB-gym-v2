@@ -80,7 +80,6 @@ def main():
                     help="generic relevance instead of the task's own prompt (ablation)")
     ap.add_argument("--n-queries", type=int, default=300)
     ap.add_argument("--top-k", type=int, default=10)
-    ap.add_argument("--method", choices=["bradley_terry", "elo"], default="bradley_terry")
     ap.add_argument("--no-filter", action="store_true")
     ap.add_argument("--workers", type=int, default=8,
                     help="concurrent judge/filter calls (vLLM throughput needs this)")
@@ -104,7 +103,7 @@ def main():
                         datefmt="%H:%M:%S")
 
     cfg = GymConfig(task_name=args.task, n_queries=args.n_queries, top_k=args.top_k,
-                    method=args.method, filter_queries=not args.no_filter,
+                    filter_queries=not args.no_filter,
                     judge_workers=args.workers, gen_workers=args.gen_workers,
                     judge_instruction=None if args.generic_judge else "auto",
                     seed=args.seed, output_dir=args.output)
@@ -116,9 +115,9 @@ def main():
     if gym.judge.parse_failure_rate:
         print(f"judge parse failures: {gym.judge.parse_failure_rate:.1%} "
               "(these score as ties; investigate if above a few percent)")
-    print(f"\nresults -> {cfg.output_dir}/leaderboard.json")
-    print("next: python3 scripts/validate.py --gym "
-          f"{cfg.output_dir}/leaderboard.json --truth mteb")
+    print(f"\nresults -> {gym.result_path}")
+    print("validation against MTEB: python3 -c "
+          f"'from gym import rank_agreement; print(rank_agreement(\"{cfg.output_dir}\"))'")
 
 
 if __name__ == "__main__":

@@ -55,7 +55,6 @@ class GymConfig:
                                   # thread-safe and vLLM throughput needs batching
 
     # --- scoring ---
-    method: str = "bradley_terry" # "bradley_terry" | "elo"
     bootstrap_samples: int = 1000
     elo_base: float = 1000.0
     elo_scale: float = 400.0

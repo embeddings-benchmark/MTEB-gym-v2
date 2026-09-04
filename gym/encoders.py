@@ -1,23 +1,13 @@
 """
 Model-aware encoding.
 
-Two things every previous version got wrong, and why they mattered:
+1. PREFIXES. Many embedding models are asymmetric: trained with distinct
+   query/document prefixes (e5 "query: "/"passage: ", bge query instruction,
+   nomic "search_query:"/"search_document:") and silently underperform without
+   them -- enough to invert a head-to-head against a symmetric model.
 
-1. PREFIXES. Many embedding models are *asymmetric*: they were trained with
-   distinct query and document prefixes, and they silently underperform without
-   them. e5 wants "query: " / "passage: ", bge wants a query instruction, nomic
-   wants "search_query:" / "search_document:". If you encode an e5 model with no
-   prefix, its retrieval quality collapses — which is exactly the kind of thing
-   that makes a *stronger* model (e5-small) lose to a weaker one (MiniLM) in a
-   head-to-head. MiniLM/mpnet are symmetric and need no prefix, so they were
-   never penalised. That asymmetry was almost certainly the cause of the
-   "gym says MiniLM > e5-small but MTEB says the opposite" mismatch.
-
-2. NORMALISATION. Cosine similarity = dot product of L2-normalised vectors.
-   Doing the division at query time (q . d / (|q||d|)) on un-normalised vectors
-   invites divide-by-zero / overflow on degenerate rows. We normalise once at
-   encode time and then only ever take dot products. No runtime division, no
-   warnings, and retrieval is a single clean matmul.
+2. NORMALISATION. Vectors are L2-normalised once at encode time, so cosine
+   similarity is a single matmul with no runtime division.
 """
 
 from __future__ import annotations
@@ -101,21 +91,6 @@ def _shim_transformers5_for_jina() -> None:
         if not hasattr(PretrainedConfig, _attr):
             setattr(PretrainedConfig, _attr, _default)
 
-
-def _cap_doc_chars(texts):
-    """Optional encode-time character cap (GYM_MAX_DOC_CHARS).
-
-    Giant-corpus documents can run to ~46k tokens; models truncate internally
-    at their max sequence length anyway, but several encode paths materialize
-    quadratic attention over the full tokenized length first (observed as
-    100-256GB allocations). Capping characters before tokenization bounds
-    every path. Applied at encode time only, so corpus fingerprints and cache
-    keys are unchanged.
-    """
-    cap = int(os.environ.get("GYM_MAX_DOC_CHARS", "0") or 0)
-    if not cap:
-        return texts
-    return [t[:cap] for t in texts]
 
 @dataclass
 class PromptTemplate:
@@ -241,8 +216,8 @@ class Encoder:
             except ValueError as _sdpa_err:
                 # Some custom-code architectures (e.g. Alibaba's NewModel behind
                 # gte-base-en-v1.5) do not support sdpa and refuse to load with
-                # the kwarg. Eager is safe here because max_seq_length is capped
-                # below, which bounds the eager mask to ~1GB.
+                # the kwarg. Eager attention is quadratic in the model's own
+                # max_seq_length; acceptable for the compact models that lack sdpa.
                 if "scaled_dot_product" not in str(_sdpa_err):
                     raise
                 logging.getLogger(__name__).warning(
@@ -253,18 +228,10 @@ class Encoder:
                     self.model_name, device=self._device, trust_remote_code=True,
                     **_kw
                 )
-            # The fallback must truncate: some ST configs leave max_seq_length
-            # effectively unbounded, so a single ~46k-token document builds a
-            # 128-256GB attention mask (observed with e5-mistral on FEVER) and
-            # produces meaningless beyond-training-length embeddings besides.
-            # mteb-path models truncate to their configured lengths; match it.
-            cap = int(os.environ.get("GYM_MAX_SEQ", "4096"))
-            try:
-                cur = getattr(self._model, "max_seq_length", None)
-                if cur is None or int(cur) > cap:
-                    self._model.max_seq_length = cap
-            except Exception:
-                self._model.max_seq_length = cap
+            # Truncation is the model's own: SentenceTransformer sets
+            # max_seq_length from the model config, exactly as mteb runs it.
+            # A model whose config declares no sane limit is a model bug,
+            # fixed upstream -- never capped or second-guessed here.
         return self._model
 
     def _encode(self, texts: list[str]) -> np.ndarray:
@@ -282,7 +249,6 @@ class Encoder:
         return self._encode([self.template.wrap_query(t) for t in texts])
 
     def encode_documents(self, texts: list[str]) -> np.ndarray:
-        texts = _cap_doc_chars(texts)
         return self._encode([self.template.wrap_document(t) for t in texts])
 
 
@@ -379,7 +345,6 @@ class MTEBEncoder:
         return self._encode(texts, is_query=True)
 
     def encode_documents(self, texts: list[str]) -> np.ndarray:
-        texts = _cap_doc_chars(texts)
         return self._encode(texts, is_query=False)
 
 

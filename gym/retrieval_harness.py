@@ -31,10 +31,8 @@ class Retrieved:
 def _corpus_fingerprint(corpus: dict[str, str]) -> str:
     """Content hash over every doc id and text.
 
-    The previous version hashed only the corpus length and the first 50 ids,
-    so a corpus revision or a change to how title+text is assembled would
-    silently reuse stale embeddings (the failure class behind v0.1's e5/MiniLM
-    inversion). Matching hashes also imply matching iteration order, so the
+    Hashing anything less (e.g. length + first ids) lets a corpus revision or
+    a change to title+text assembly silently reuse stale embeddings. Matching hashes also imply matching iteration order, so the
     cached matrix rows stay aligned with the live corpus dict. Prompt-variant
     isolation is handled separately by the encoder's cache_name.
     """

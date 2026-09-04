@@ -10,9 +10,9 @@ then fit ratings two ways:
                   batch of comparisons and is what Chatbot Arena / AlpacaEval use.
   elo           : classic online Elo, order-dependent, kept for parity/debugging.
 
-Both report bootstrap confidence intervals by resampling verdicts with
-replacement, which is the honest way to show how much the ranking can be trusted
-given the number of comparisons (the thing Rohan warned was thin).
+Both report bootstrap confidence intervals by resampling queries (clusters of
+correlated verdicts), showing how much the ranking can be trusted given the
+number of comparisons.
 """
 
 from __future__ import annotations

@@ -26,8 +26,15 @@ def runtime_versions() -> dict[str, str | None]:
     }
 
 
-def task_identity(task_name: str) -> dict[str, Any]:
-    """Read task identity/provenance directly from installed MTEB metadata."""
+def task_identity(task_name: str, corpus_path: str | None = None) -> dict[str, Any]:
+    """Task identity from installed MTEB metadata, or minimal for a local corpus."""
+    if corpus_path is not None:
+        return {
+            "task_name": task_name, "dataset_path": corpus_path,
+            "dataset_revision": None, "task_type": "Retrieval",
+            "main_score": None, "eval_splits": [], "eval_langs": [],
+            "mteb_prompt": None,
+        }
     import mteb
 
     task = mteb.get_tasks(tasks=[task_name])[0]
@@ -85,25 +92,27 @@ def client_model_id(client: Any) -> str | None:
     return str(getattr(client, "model", type(client).__name__))
 
 
-def judge_instruction_metadata(task_name: str) -> dict[str, Any]:
-    """Describe the instruction source using the same resolution as Judge."""
+def judge_instruction_metadata(cfg: Any) -> dict[str, Any]:
+    """Resolve the judge instruction, one path for Judge and the record:
+    env override > config text > "auto": the task's mteb prompt > generic."""
     import os
-
-    from .judge import REGISTRY_VERSION, _TASK_INSTRUCTIONS
 
     override = os.environ.get("GYM_JUDGE_INSTR_OVERRIDE") or None
     if override is not None:
-        instruction = override
-        source = "env:GYM_JUDGE_INSTR_OVERRIDE"
-    else:
-        instruction = _TASK_INSTRUCTIONS.get(task_name)
-        source = "mteb_task_prompt_registry" if instruction is not None else None
-
-    return {
-        "instruction": instruction,
-        "instruction_source": source,
-        "registry_version": REGISTRY_VERSION,
-    }
+        return {"instruction": override,
+                "instruction_source": "env:GYM_JUDGE_INSTR_OVERRIDE"}
+    instr, source = cfg.judge_instruction, "config:judge_instruction"
+    if instr == "auto":
+        instr, source = None, "mteb:task_prompt"
+        if not cfg.corpus_path:
+            try:
+                from .judge import task_prompt
+                instr = task_prompt(cfg.task_name)
+            except ImportError:  # no mteb: dry runs, CI
+                pass
+    if not instr:
+        return {"instruction": None, "instruction_source": None}
+    return {"instruction": instr, "instruction_source": source}
 
 
 def verdict_diagnostics(verdicts: list[Any]) -> dict[str, Any]:
@@ -170,8 +179,8 @@ def build_result_record(
     """Build an MTEB-like result record plus its hash-defining config."""
     import os
 
-    task = task_identity(cfg.task_name)
-    instruction = judge_instruction_metadata(cfg.task_name)
+    task = task_identity(cfg.task_name, getattr(cfg, "corpus_path", None))
+    instruction = judge_instruction_metadata(cfg)
     diag = verdict_diagnostics(verdicts)
 
     experiment_config = {
@@ -203,8 +212,6 @@ def build_result_record(
         "corpus_split": cfg.corpus_split,
         "corpus_cap": corpus_cap,
         "inject_qrels_docs": inject_qrels_docs,
-        "max_doc_chars": int(os.environ.get("GYM_MAX_DOC_CHARS", "0") or 0),
-        "max_seq": int(os.environ.get("GYM_MAX_SEQ", "4096")),
         "models": list(models),
     }
     experiment_config["config_hash"] = experiment_config_hash(experiment_config)
@@ -229,9 +236,10 @@ def build_result_record(
             "identical_retrieval_rate",
             "n_comparisons",
         )},
-        "kappa_committed": None,
-        "committed_agreement": None,
-        "clear_winner_agreement": None,
+        # judge_ prefix = verdict-level (judge vs qrels, human-query arms only)
+        "judge_kappa_committed": None,
+        "judge_committed_agreement": None,
+        "judge_clear_winner_agreement": None,
     }
 
     versions = runtime_versions()

@@ -1,27 +1,15 @@
 """
 Pairwise judge.
 
-What changed and why it matters for the tie-rate problem
---------------------------------------------------------
-The old judge ran each pair twice (A first, B first) and, on any disagreement,
-*downgraded to a tie*. On NFCorpus that produced ~85% ties — almost all the
-signal got thrown away, so the ELO gap was tiny and noisy.
+Each pair is judged in both presentation orders and scored fractionally:
 
-Two models are rarely "equal"; more often the judge is order-sensitive. So
-instead of collapsing disagreements to ties, we record a FRACTIONAL outcome per
-query:
+    score_A = mean over the two orders of {win: 1, tie: 0.5, loss: 0}
 
-    score_A = mean over the two orders of {win:1, tie:0.5, loss:0}
-
-A clean win in both orders -> 1.0. A split (A wins one order, loses the flipped
-one) -> 0.5: a *soft* tie that still carries the magnitude into Bradley-Terry,
-rather than a hard tie that contributes nothing. Across many queries these
-fractions integrate into a clean ranking even when any single pair is ambiguous.
-
-We also surface POSITION BIAS as a first-class diagnostic (Rohan's Fig-5 issue):
-`a_first_rate` is how often the judge picks whichever system was shown first.
-0.5 is unbiased; the team saw ~0.67 at depth 1. Flipping positions cancels it in
-the score; the metric just lets you see how bad it is for a given judge.
+A split across orders becomes 0.5 -- a soft tie that still carries magnitude
+into Bradley-Terry instead of discarding the signal as a hard tie. Position
+bias is surfaced as `a_first_rate` (how often the judge picks whichever system
+was shown first; 0.5 is unbiased). Flipping orders cancels it in the score;
+the metric only makes it visible.
 """
 
 from __future__ import annotations
@@ -48,44 +36,27 @@ _JUDGE_SYSTEM = (
     "\"confidence\": \"low\"|\"medium\"|\"high\", \"reasoning\": \"one sentence\"}"
 )
 
-# ---------------------------------------------------------------- task registry
-# Per-task judge instructions, copied VERBATIM from mteb TaskMetadata.prompt
-# (pre-registered; provenance recorded per entry). An absent entry means the
-# generic relevance criterion applies and judge_system() returns _JUDGE_SYSTEM
-# byte-for-byte, so existing verdict caches are untouched. Entries are frozen
-# before any judged run; any edit bumps REGISTRY_VERSION (which participates in
-# the verdict-cache signature) and requires a new pre-registration.
-REGISTRY_VERSION = 1
-_TASK_INSTRUCTIONS: dict[str, str] = {
-    # source: mteb TaskMetadata.prompt, pinned mteb 2.15.1, all verbatim.
-    # Batch 2 (FEVER..FiQA2018) frozen 2026-07-29 BEFORE any judged run against
-    # them; expectations recorded in docs/ai/TASK_PLAN_2026-07-29_master.md W3.
-    "ArguAna": "Given a claim, find documents that refute the claim.",
-    "FEVER": "Given a claim, retrieve documents that support or refute the claim",
-    "ClimateFEVER": "Given a claim about climate change, retrieve documents that support or refute the claim",
-    "Touche2020": "Given a question, retrieve detailed and persuasive arguments that answer the question",
-    "HotpotQA": "Given a multi-hop question, retrieve documents that can help answer the question",
-    "NFCorpus": "Given a question, retrieve relevant documents that best answer the question",
-    "SciFact": "Given a scientific claim, retrieve documents that support or refute the claim",
-    "FiQA2018": "Given a financial question, retrieve user replies that best answer the question",
-}
+def task_prompt(task_name: str) -> str | None:
+    """The task's own criterion, verbatim from mteb TaskMetadata.prompt. None
+    when the task has no prompt or it is an encoder prefix rather than a task
+    statement ("Represent this post for searching passages: ", BRIGHT)."""
+    import mteb
+
+    p = mteb.get_tasks(tasks=[task_name])[0].metadata.prompt
+    p = (p if isinstance(p, str) else (p or {}).get("query") or "").strip()
+    if not p or p.endswith(":") or p.lower().startswith("represent "):
+        return None
+    return p
 
 
-def judge_system(task_name: str | None = None) -> str:
-    """Generic judge prompt, with the dataset's own task instruction injected
-    when the registry has one. The injected line replaces only the criterion
-    clause's referent ("satisfies the query") context by prefacing the task
-    definition; all other wording is identical to the generic prompt."""
-    # CONTROL-ARM MECHANISM (pre-registered as disclosed control arms, not the
-    # confirmatory condition). When GYM_JUDGE_INSTR_OVERRIDE is set, its text is
-    # used as the task instruction for whatever task is being judged. This exists
-    # so the placebo arm (instruction-shaped but wrong-task text) and the
-    # cross-corpus negative control (ArguAna's instruction injected into a healthy
-    # corpus) can run WITHOUT editing the frozen registry or the generic prompt.
-    # Unset -> behaviour is byte-identical to REGISTRY_VERSION 1. The verdict-cache
-    # signature in gym.py hashes the RESOLVED prompt, so an override automatically
-    # gets its own cache namespace and can never collide with a real result.
-    instr = os.environ.get("GYM_JUDGE_INSTR_OVERRIDE") or _TASK_INSTRUCTIONS.get(task_name or "")
+def judge_system(instruction: str | None = None) -> str:
+    """Generic judge prompt, with a task instruction injected when given.
+    Resolution lives in results.judge_instruction_metadata (env override >
+    config text > "auto": the task's mteb prompt > generic); the env override exists so
+    control arms (placebo / cross-corpus text) run without config edits. The
+    verdict-cache signature hashes the RESOLVED prompt, so any instruction
+    gets its own cache namespace and can never collide with a generic run."""
+    instr = os.environ.get("GYM_JUDGE_INSTR_OVERRIDE") or instruction
     if not instr:
         return _JUDGE_SYSTEM
     return (
@@ -136,7 +107,7 @@ def _parse_response(raw: str) -> tuple[str, str, bool]:
     # (EnsembleClient.chat packs them that way). A lone judge that happens to
     # emit a top-level JSON array of objects must NOT be voted as an ensemble:
     # that path drops every dict element and silently returns a parse-failure
-    # tie (the v0.1 tie-flattening bug). Require all-string elements, else fall
+    # tie (the tie-flattening failure mode). Require all-string elements, else fall
     # through to single-object parsing below.
     if isinstance(members, list) and members and all(isinstance(m, str) for m in members):
         from .clients import EnsembleClient
@@ -155,8 +126,8 @@ def _parse_response(raw: str) -> tuple[str, str, bool]:
 
 class Judge:
     def __init__(self, client, flip_positions: bool = True, note: str = "",
-                 workers: int = 1, task_name: str | None = None):
-        self.system = judge_system(task_name)
+                 workers: int = 1, instruction: str | None = None):
+        self.system = judge_system(instruction)
         self.client = client
         self.flip = flip_positions
         self.note = note
@@ -175,7 +146,7 @@ class Judge:
         parsed_ok is False when the model's output had no usable verdict; we
         still score it as a tie, but it is counted separately so a misbehaving
         judge (refusals, truncation, thinking-mode preambles) cannot silently
-        flatten the leaderboard the way v0.1's hard ties did.
+        flatten the leaderboard into ties.
         """
         msg = [
             {"role": "system", "content": self.system},
@@ -352,18 +323,9 @@ class Judge:
         return (self._parse_failures / self._asks) if self._asks else None
 
 # ---------------------------------------------------------------------------
-# Pointwise judge (ablation vs pairwise)
-# ---------------------------------------------------------------------------
-# Instead of comparing A vs B directly, we score each model's result set
-# independently on a 1-5 scale, then rank models by average score.
-#
-# Cost: O(n * m) calls vs O(n * m^2) for pairwise — linear in queries,
-# not quadratic in model pairs. Tejas's lit review says pointwise matches
-# or beats pairwise on system-ranking correlation, which is the hypothesis
-# we're testing.
-#
-# Output is a dict {model_name: [scores]} — one score per query — which
-# feeds directly into PointwiseRanker.rank() to produce a leaderboard.
+# Pointwise judge (ablation vs pairwise): score each model's result set
+# independently on a 1-5 scale, rank by average. O(n*m) calls vs O(n*m^2);
+# output {model: [scores]} feeds PointwiseRanker.rank().
 # ---------------------------------------------------------------------------
 
 _POINTWISE_SYSTEM = (

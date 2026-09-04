@@ -588,6 +588,62 @@ def test_corpus_control_resolution():
     print("  corpus control resolution ok")
 
 
+def test_judge_instruction_resolution():
+    import os
+    from gym.config import GymConfig
+    from gym.judge import _JUDGE_SYSTEM, judge_system
+    from gym.results import judge_instruction_metadata as meta
+    os.environ.pop("GYM_JUDGE_INSTR_OVERRIDE", None)
+    assert judge_system() == _JUDGE_SYSTEM  # generic prompt unchanged: caches rest on this
+    assert meta(GymConfig(judge_instruction=None))["instruction"] is None
+    assert meta(GymConfig(judge_instruction="Find docs that refute")) == {
+        "instruction": "Find docs that refute", "instruction_source": "config:judge_instruction"}
+    assert meta(GymConfig(corpus_path="/x"))["instruction"] is None  # no task to look up
+    try:
+        import mteb
+    except ImportError:
+        assert meta(GymConfig(task_name="ArguAna"))["instruction"] is None
+        return
+    from gym.judge import task_prompt
+    assert task_prompt("BrightBiologyRetrieval") is None  # encoder prefix, not a criterion
+    m = meta(GymConfig(task_name="ArguAna"))
+    assert m["instruction_source"] == "mteb:task_prompt" and "refute the claim" in m["instruction"]
+
+def test_top10_and_tau_ap():
+    import numpy as np
+    from gym.validate import correlate, _tau_ap
+    rng = np.random.default_rng(0)
+    truth = {f"m{i}": float(i) for i in range(25)}
+    # strong models (15..24) shuffled among themselves, weak ordered: aggregate
+    # rho stays high, top-10 agreement collapses
+    top = list(range(15, 25)); rng.shuffle(top)
+    gym_scores = {f"m{i}": float(v) for i, v in zip(range(15, 25), top)}
+    gym_scores.update({f"m{i}": float(i) for i in range(15)})
+    out = correlate(gym_scores, truth, bootstrap=0)
+    assert out["spearman_rho"] > 0.85
+    assert abs(out["spearman_top10"]) < 0.6
+    # tau_ap sanity: identity = 1, reversal = -1
+    a = np.arange(10, dtype=float)
+    assert _tau_ap(a, a) == 1.0
+    assert _tau_ap(-a, a) == -1.0
+
+
+def test_local_corpus():
+    import tempfile
+    from gym import Gym, GymConfig
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "a.txt").write_text("alpha doc about refunds")
+        (root / "b.md").write_text("beta doc about shipping")
+        cfg = GymConfig(task_name="my-docs", corpus_path=str(root), judge="mock",
+                        judge_instruction="Prefer results that answer support questions.",
+                        models=["m1", "m2"], output_dir=root / "out")
+        g = Gym(cfg)
+        corpus = g.load_corpus()
+        assert set(corpus) == {"a.txt", "b.md"}
+        assert "support questions" in g.judge.system
+
 if __name__ == "__main__":
     print("Running MTEB Gym smoke tests...\n")
     test_json_extraction()
@@ -613,4 +669,7 @@ if __name__ == "__main__":
     test_rank_agreement_api()
     test_rank_agreement_mteb_fallback()
     test_corpus_control_resolution()
+    test_judge_instruction_resolution()
+    test_top10_and_tau_ap()
+    test_local_corpus()
     print("\nAll smoke tests passed.")

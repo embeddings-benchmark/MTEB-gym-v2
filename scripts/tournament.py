@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-N-model round-robin tournament. Defaults to a sub-1B model set comparable to
-Rohan's, plus a BM25 anchor.
+N-model round-robin tournament. Defaults to a sub-1B arena model set
+plus a BM25 anchor.
 
-    # local Qwen3-4B judge (recommended on the GPU box):
+    # judge served locally with vLLM:
     PYTHONPATH=. python3 scripts/tournament.py \
         --judge qwen3 --base-url http://localhost:8000/v1 \
         --n-queries 300 --output results/qwen3_synth
@@ -22,7 +22,7 @@ import os
 from gym import Gym, GymConfig
 from gym.clients import AnthropicClient, MockClient, OpenAICompatClient
 
-# Rohan's original 7 (the open sub-1B set from the arena) + the bm25 anchor.
+# The original 7-model arena subset (open, sub-1B) + the bm25 anchor.
 DEFAULT_MODELS = [
     "bm25",
     "sentence-transformers/all-MiniLM-L6-v2",
@@ -47,12 +47,15 @@ def _api_key(args):
 def build_judge(args):
     if args.mock:
         return MockClient()
+    # The judge model id is experiment-defining state: no baked default.
+    if not args.model:
+        raise SystemExit("--model is required: the exact judge model id (as served)")
     if args.judge == "qwen3":
-        return OpenAICompatClient(model=args.model or "Qwen/Qwen3-4B-Instruct-2507",
+        return OpenAICompatClient(model=args.model,
                                   base_url=args.base_url, api_key=_api_key(args), extra_body={"chat_template_kwargs": {"enable_thinking": False}})
     if args.judge == "openai":
-        return OpenAICompatClient(model=args.model or "gpt-4o-mini", base_url=args.base_url or "https://api.openai.com/v1", api_key=_api_key(args), extra_body={})
-    return AnthropicClient(model=args.model or "claude-haiku-4-5-20251001")
+        return OpenAICompatClient(model=args.model, base_url=args.base_url or "https://api.openai.com/v1", api_key=_api_key(args), extra_body={})
+    return AnthropicClient(model=args.model)
 
 
 def build_generator(args):
@@ -69,10 +72,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", nargs="+", default=DEFAULT_MODELS)
     ap.add_argument("--judge", choices=["claude", "qwen3", "openai"], default="claude")
-    ap.add_argument("--model", default=None, help="override judge model id")
+    ap.add_argument("--model", default=None, help="judge model id (required unless --mock)")
     ap.add_argument("--base-url", default="http://localhost:8000/v1")
     ap.add_argument("--mock", action="store_true")
     ap.add_argument("--task", default="NFCorpus")
+    ap.add_argument("--generic-judge", action="store_true",
+                    help="generic relevance instead of the task's own prompt (ablation)")
     ap.add_argument("--n-queries", type=int, default=300)
     ap.add_argument("--top-k", type=int, default=10)
     ap.add_argument("--method", choices=["bradley_terry", "elo"], default="bradley_terry")
@@ -101,6 +106,7 @@ def main():
     cfg = GymConfig(task_name=args.task, n_queries=args.n_queries, top_k=args.top_k,
                     method=args.method, filter_queries=not args.no_filter,
                     judge_workers=args.workers, gen_workers=args.gen_workers,
+                    judge_instruction=None if args.generic_judge else "auto",
                     seed=args.seed, output_dir=args.output)
     gym = Gym(cfg, judge_client=build_judge(args), gen_client=build_generator(args))
     gym.run(args.models)

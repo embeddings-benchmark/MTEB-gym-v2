@@ -21,6 +21,13 @@ class GymConfig:
     # environment-variable behavior until Gym resolves them at runtime.
     corpus_cap: int | None = None
     inject_qrels_docs: str | None = None
+    # Unlabeled local corpus: a directory of .txt/.md files or a .jsonl with
+    # id/text fields. When set, task_name is just the record label and
+    # judge_instruction supplies the relevance criterion (no registry entry).
+    corpus_path: str | None = None
+    # Judge criterion: "auto" = the task's own mteb prompt (generic when it has
+    # none or corpus_path is set); None = generic; other text = used verbatim.
+    judge_instruction: str | None = "auto"
 
     # --- query generation ---
     n_queries: int = 100          # target number of *kept* queries after filtering
@@ -32,7 +39,7 @@ class GymConfig:
                                   # order-preserving, so worker count never
                                   # changes the generated query set
 
-    # --- query filtering (Rohan's key lever) ---
+    # --- query filtering (the biggest correlation lever) ---
     filter_queries: bool = True
     filter_min_score: int = 3     # LLM quality score 1-5; keep >= this
     dedup_threshold: float = 0.92 # cosine-dup cutoff on a cheap encoder

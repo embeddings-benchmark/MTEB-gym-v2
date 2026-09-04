@@ -121,7 +121,9 @@ class Gym:
         self.judge_client = judge_client
         self.gen_client = gen_client or judge_client
         self.harness = RetrievalHarness(cfg.cache_dir, top_k=cfg.top_k)
-        self.judge = Judge(judge_client, task_name=cfg.task_name,
+        from .results import judge_instruction_metadata
+        self.judge = Judge(judge_client,
+                           instruction=judge_instruction_metadata(cfg)["instruction"],
                            flip_positions=cfg.flip_positions,
                            note=cfg.judge_batch_note, workers=cfg.judge_workers)
         self._retr_cache: dict[str, list] = {}
@@ -159,6 +161,24 @@ class Gym:
             return self.cfg.inject_qrels_docs
         return os.environ.get("GYM_INJECT_QRELS_DOCS")
 
+    def _load_local_corpus(self) -> dict[str, str]:
+        """{doc_id: text} from a directory of .txt/.md files or a .jsonl."""
+        import random
+        root = Path(self.cfg.corpus_path)
+        if root.is_file() and root.suffix == ".jsonl":
+            rows = (json.loads(l) for l in root.read_text().splitlines() if l.strip())
+            out = {str(r["id"]): str(r.get("text") or "") for r in rows}
+        else:
+            files = sorted(p for p in root.rglob("*") if p.suffix in (".txt", ".md"))
+            out = {str(p.relative_to(root)): p.read_text(errors="ignore") for p in files}
+        if not out:
+            raise ValueError(f"no documents found in {root}")
+        cap = self._corpus_cap()
+        if cap and len(out) > cap:
+            keep = random.Random(self.cfg.seed).sample(sorted(out), cap)
+            out = {k: out[k] for k in keep}
+        return out
+
     def load_corpus(self) -> dict[str, str]:
         """Load an MTEB task corpus as {doc_id: 'title text'}.
 
@@ -166,6 +186,8 @@ class Gym:
         load_data() populates task.dataset[subset][split]["corpus"] as a HF
         Dataset with id/title/text columns and task.corpus no longer exists.
         """
+        if self.cfg.corpus_path:
+            return self._load_local_corpus()
         import mteb, random
         task = mteb.get_tasks(tasks=[self.cfg.task_name])[0]
         task.load_data()
@@ -367,12 +389,9 @@ class Gym:
         itself. This is what stops a --judge qwen3 rerun (or a judge-prompt
         edit) from silently reusing stale verdicts out of the same output dir.
         """
-        from .judge import _JUDGE_SYSTEM
         judge_id = getattr(self.judge_client, "model", type(self.judge_client).__name__)
-        from .judge import REGISTRY_VERSION
-        # hash the judge's RESOLVED system prompt (per-task instruction included)
-        # a task with a registry instruction hashes differently; generic tasks hash
-        # byte-identically to before, so all existing verdict caches are preserved.
+        # hash the RESOLVED system prompt, task instruction included: instructed
+        # and generic runs never share caches; generic hashes as before.
         prompt_sig = hashlib.sha256(
             self.judge.system.encode()).hexdigest()[:8]
         qsig = "||".join(f"{q.qid}:{q.text}" for q in queries)

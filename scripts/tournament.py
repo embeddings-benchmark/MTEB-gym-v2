@@ -76,6 +76,8 @@ def main():
     ap.add_argument("--base-url", default="http://localhost:8000/v1")
     ap.add_argument("--mock", action="store_true")
     ap.add_argument("--task", default="NFCorpus")
+    ap.add_argument("--generic-judge", action="store_true",
+                    help="generic relevance instead of the task's own prompt (ablation)")
     ap.add_argument("--n-queries", type=int, default=300)
     ap.add_argument("--top-k", type=int, default=10)
     ap.add_argument("--method", choices=["bradley_terry", "elo"], default="bradley_terry")
@@ -104,6 +106,7 @@ def main():
     cfg = GymConfig(task_name=args.task, n_queries=args.n_queries, top_k=args.top_k,
                     method=args.method, filter_queries=not args.no_filter,
                     judge_workers=args.workers, gen_workers=args.gen_workers,
+                    judge_instruction=None if args.generic_judge else "auto",
                     seed=args.seed, output_dir=args.output)
     gym = Gym(cfg, judge_client=build_judge(args), gen_client=build_generator(args))
     gym.run(args.models)

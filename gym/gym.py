@@ -390,9 +390,8 @@ class Gym:
         edit) from silently reusing stale verdicts out of the same output dir.
         """
         judge_id = getattr(self.judge_client, "model", type(self.judge_client).__name__)
-        # hash the judge's RESOLVED system prompt (per-task instruction included)
-        # a task with a registry instruction hashes differently; generic tasks hash
-        # byte-identically to before, so all existing verdict caches are preserved.
+        # hash the RESOLVED system prompt, task instruction included: instructed
+        # and generic runs never share caches; generic hashes as before.
         prompt_sig = hashlib.sha256(
             self.judge.system.encode()).hexdigest()[:8]
         qsig = "||".join(f"{q.qid}:{q.text}" for q in queries)

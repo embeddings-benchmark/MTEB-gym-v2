@@ -37,20 +37,22 @@ _JUDGE_SYSTEM = (
 )
 
 def task_prompt(task_name: str) -> str | None:
-    """The task's own mteb prompt text, for passing as cfg.judge_instruction
-    when a run should judge by the task's stated criterion. None when the
-    task defines no prompt. Beware: some task families (e.g. BRIGHT) carry
-    encoder prefixes here, not task definitions."""
+    """The task's own criterion, verbatim from mteb TaskMetadata.prompt. None
+    when the task has no prompt or it is an encoder prefix rather than a task
+    statement ("Represent this post for searching passages: ", BRIGHT)."""
     import mteb
 
-    prompt = mteb.get_tasks(tasks=[task_name])[0].metadata.prompt
-    return prompt if isinstance(prompt, str) else (prompt or {}).get("query")
+    p = mteb.get_tasks(tasks=[task_name])[0].metadata.prompt
+    p = (p if isinstance(p, str) else (p or {}).get("query") or "").strip()
+    if not p or p.endswith(":") or p.lower().startswith("represent "):
+        return None
+    return p
 
 
 def judge_system(instruction: str | None = None) -> str:
     """Generic judge prompt, with a task instruction injected when given.
     Resolution lives in results.judge_instruction_metadata (env override >
-    config text > mteb task prompt > generic); the env override exists so
+    config text > "auto": the task's mteb prompt > generic); the env override exists so
     control arms (placebo / cross-corpus text) run without config edits. The
     verdict-cache signature hashes the RESOLVED prompt, so any instruction
     gets its own cache namespace and can never collide with a generic run."""

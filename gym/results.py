@@ -93,18 +93,26 @@ def client_model_id(client: Any) -> str | None:
 
 
 def judge_instruction_metadata(cfg: Any) -> dict[str, Any]:
-    """Resolve the judge instruction: env override > config text > generic.
-    One path for Judge and the record."""
+    """Resolve the judge instruction, one path for Judge and the record:
+    env override > config text > "auto": the task's mteb prompt > generic."""
     import os
 
     override = os.environ.get("GYM_JUDGE_INSTR_OVERRIDE") or None
     if override is not None:
         return {"instruction": override,
                 "instruction_source": "env:GYM_JUDGE_INSTR_OVERRIDE"}
-    if getattr(cfg, "judge_instruction", None):
-        return {"instruction": cfg.judge_instruction,
-                "instruction_source": "config:judge_instruction"}
-    return {"instruction": None, "instruction_source": None}
+    instr, source = cfg.judge_instruction, "config:judge_instruction"
+    if instr == "auto":
+        instr, source = None, "mteb:task_prompt"
+        if not cfg.corpus_path:
+            try:
+                from .judge import task_prompt
+                instr = task_prompt(cfg.task_name)
+            except ImportError:  # no mteb: dry runs, CI
+                pass
+    if not instr:
+        return {"instruction": None, "instruction_source": None}
+    return {"instruction": instr, "instruction_source": source}
 
 
 def verdict_diagnostics(verdicts: list[Any]) -> dict[str, Any]:

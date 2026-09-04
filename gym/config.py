@@ -25,9 +25,9 @@ class GymConfig:
     # id/text fields. When set, task_name is just the record label and
     # judge_instruction supplies the relevance criterion (no registry entry).
     corpus_path: str | None = None
-    # The relevance criterion the judge applies; None = generic relevance.
-    # For a benchmark task's own criterion pass gym.task_prompt(task_name).
-    judge_instruction: str | None = None
+    # Judge criterion: "auto" = the task's own mteb prompt (generic when it has
+    # none or corpus_path is set); None = generic; other text = used verbatim.
+    judge_instruction: str | None = "auto"
 
     # --- query generation ---
     n_queries: int = 100          # target number of *kept* queries after filtering

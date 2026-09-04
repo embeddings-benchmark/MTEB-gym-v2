@@ -592,25 +592,22 @@ def test_judge_instruction_resolution():
     import os
     from gym.config import GymConfig
     from gym.judge import _JUDGE_SYSTEM, judge_system
-    from gym.results import judge_instruction_metadata
+    from gym.results import judge_instruction_metadata as meta
     os.environ.pop("GYM_JUDGE_INSTR_OVERRIDE", None)
-    # no instruction -> generic prompt byte-identical: cache preservation rests on this
-    assert judge_system() == _JUDGE_SYSTEM
-    assert "refute" in judge_system("Find docs that refute the claim")
-    # generic unless the config states a criterion
-    assert judge_instruction_metadata(GymConfig(task_name="ArguAna")) == {
-        "instruction": None, "instruction_source": None}
-    meta = judge_instruction_metadata(
-        GymConfig(task_name="ArguAna", judge_instruction="Find docs that refute"))
-    assert meta["instruction_source"] == "config:judge_instruction"
+    assert judge_system() == _JUDGE_SYSTEM  # generic prompt unchanged: caches rest on this
+    assert meta(GymConfig(judge_instruction=None))["instruction"] is None
+    assert meta(GymConfig(judge_instruction="Find docs that refute")) == {
+        "instruction": "Find docs that refute", "instruction_source": "config:judge_instruction"}
+    assert meta(GymConfig(corpus_path="/x"))["instruction"] is None  # no task to look up
     try:
         import mteb
     except ImportError:
-        print("  instruction: mteb absent, prompt checks skipped")
+        assert meta(GymConfig(task_name="ArguAna"))["instruction"] is None
         return
     from gym.judge import task_prompt
-    assert "refute the claim" in task_prompt("ArguAna")
-    assert task_prompt("AILACasedocs") is None
+    assert task_prompt("BrightBiologyRetrieval") is None  # encoder prefix, not a criterion
+    m = meta(GymConfig(task_name="ArguAna"))
+    assert m["instruction_source"] == "mteb:task_prompt" and "refute the claim" in m["instruction"]
 
 def test_top10_and_tau_ap():
     import numpy as np

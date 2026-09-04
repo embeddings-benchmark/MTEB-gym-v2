@@ -1,12 +1,7 @@
 """
-BM25 baseline.
-
-BM25 is the lexical anchor every dense
-model should beat. If a dense model loses to BM25 in the gym, that's a strong
-smell test that something is wrong (bad prefixes, broken encoding, junk queries).
-
-Implements Okapi BM25 with no heavy deps (pure numpy + a tokenizer regex), so it
-behaves like just another "model" in a tournament.
+Non-dense baselines: BM25 (the lexical anchor every dense model should beat)
+and ColBERT (late interaction). Each quacks like an encoder+harness pair:
+`.model_name` and `.retrieve(corpus, queries) -> list[Retrieved]`.
 """
 
 from __future__ import annotations
@@ -27,7 +22,7 @@ def _tok(text: str) -> list[str]:
 
 
 class BM25Retriever:
-    """Quacks like an Encoder+Harness pair: .name and .retrieve(corpus, queries)."""
+    """Duck-types the encoder+harness pair: .model_name and .retrieve(corpus, queries)."""
 
     model_name = "bm25"
 
@@ -95,7 +90,7 @@ class BM25Retriever:
 
 
 class ColBERTRetriever:
-    """Late-interaction retriever. Quacks like an Encoder+Harness pair:
+    """Late-interaction retriever, duck-typed like BM25Retriever:
     `.model_name` and `.retrieve(corpus, queries) -> list[Retrieved]`.
 
     Encodes the whole corpus once into per-document token-embedding tensors,

@@ -183,11 +183,11 @@ class QueryGenerator:
             )
 
     def _dedup(self, queries: list[Query]) -> list[Query]:
-        """Drop near-duplicate queries. Uses a tiny encoder if available; else skips."""
+        """Drop near-duplicates by cosine on a small encoder; skipped without ML deps."""
         try:
-            from .encoders import Encoder
-            enc = Encoder("sentence-transformers/all-MiniLM-L6-v2")
-            vecs = enc.encode_queries([q.text for q in queries])
+            from sentence_transformers import SentenceTransformer
+            vecs = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2").encode(
+                [q.text for q in queries], normalize_embeddings=True, show_progress_bar=False)
         except Exception:  # noqa: BLE001 - no ML deps / offline -> skip dedup
             return queries
         keep: list[int] = []

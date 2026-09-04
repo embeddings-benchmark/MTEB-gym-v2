@@ -1,10 +1,6 @@
 """
-Retrieval harness.
-
-Encodes the corpus once per model and caches it to disk (keyed by a filesystem
-safe model id + a corpus fingerprint, so the '/' in 'intfloat/...' no longer
-creates phantom subdirectories). Retrieval is a single dense matmul on
-L2-normalised vectors — no per-query division, no overflow warnings.
+Retrieval harness: encodes the corpus once per model, caches it on disk keyed by
+model + corpus fingerprint, and retrieves with one matmul over unit vectors.
 """
 
 from __future__ import annotations
@@ -16,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .encoders import Encoder, cache_key
+from .encoders import cache_key
 
 
 @dataclass
@@ -29,13 +25,9 @@ class Retrieved:
 
 
 def _corpus_fingerprint(corpus: dict[str, str]) -> str:
-    """Content hash over every doc id and text.
-
-    Hashing anything less (e.g. length + first ids) lets a corpus revision or
-    a change to title+text assembly silently reuse stale embeddings. Matching hashes also imply matching iteration order, so the
-    cached matrix rows stay aligned with the live corpus dict. Prompt-variant
-    isolation is handled separately by the encoder's cache_name.
-    """
+    """Content hash over every doc id and text, in order: a corpus revision or a
+    different title+text assembly can never reuse stale embeddings, and matching
+    hashes imply cached rows align with the live corpus dict."""
     h = hashlib.sha256()
     for did, text in corpus.items():
         h.update(did.encode())
@@ -54,26 +46,20 @@ class RetrievalHarness:
     def _corpus_cache_path(self, model_name: str, fp: str) -> Path:
         return self.cache_dir / f"corpus_{cache_key(model_name)}_{fp}.npy"
 
-    def encode_corpus(self, encoder: Encoder, corpus: dict[str, str]) -> np.ndarray:
+    def encode_corpus(self, encoder, corpus: dict[str, str]) -> np.ndarray:
         fp = _corpus_fingerprint(corpus)
-        # cache_name (if present) distinguishes prompt variants of the same model
-        path = self._corpus_cache_path(getattr(encoder, "cache_name", encoder.model_name), fp)
+        path = self._corpus_cache_path(encoder.cache_name, fp)
         if path.exists():
             return np.load(str(path))
         embs = encoder.encode_documents(list(corpus.values()))
-        # Atomic write: a crash or SLURM preemption mid-save would otherwise
-        # leave a truncated .npy that every future run silently trusts via
-        # np.load. Write to a temp file (a file handle, so np.save does not
-        # re-append .npy to the name), then os.replace -- atomic on the same
-        # filesystem -- so the cache path only ever appears complete.
+        # atomic write: a crash mid-save must not leave a truncated .npy that later runs trust
         tmp = str(path) + ".tmp"
         with open(tmp, "wb") as fh:
             np.save(fh, embs)
         os.replace(tmp, str(path))
         return embs
 
-    def retrieve(self, encoder: Encoder, corpus: dict[str, str],
-                 queries: list) -> list[Retrieved]:
+    def retrieve(self, encoder, corpus: dict[str, str], queries: list) -> list[Retrieved]:
         """`queries` is a list of objects with .qid and .text."""
         doc_ids = list(corpus.keys())
         doc_texts = list(corpus.values())

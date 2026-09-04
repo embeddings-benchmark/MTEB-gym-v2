@@ -17,7 +17,6 @@ from gym.query_generator import Query, QueryGenerator, _extract_json
 from gym.retrieval_harness import Retrieved
 from gym.scoring import rate, format_leaderboard
 from gym.validate import correlate
-from gym.encoders import resolve_template, cache_key
 
 
 def make_corpus(n=40):
@@ -39,29 +38,6 @@ def test_json_extraction():
     # braces inside a string value must not truncate the parse
     assert _extract_json('{"reasoning": "set {x} wins", "winner": "B"}')["winner"] == "B"
     print("  json extraction ok")
-
-
-def test_prefixes():
-    assert resolve_template("intfloat/multilingual-e5-small").query.startswith("query:")
-    assert resolve_template("intfloat/multilingual-e5-small").document.startswith("passage:")
-    assert resolve_template("BAAI/bge-large-en-v1.5").query.startswith("Represent")
-    assert resolve_template("sentence-transformers/all-MiniLM-L6-v2").query == "{text}"
-    assert cache_key("intfloat/multilingual-e5-small") == "intfloat_multilingual-e5-small"
-    # instruct-e5 must NOT fall through to the symmetric query:/passage: rule
-    instruct = resolve_template("intfloat/multilingual-e5-large-instruct")
-    assert instruct.query.startswith("Instruct:")
-    assert instruct.document == "{text}"
-    assert resolve_template("intfloat/e5-mistral-7b-instruct").query.startswith("Instruct:")
-    print("  prefix registry + cache key ok")
-
-
-def test_make_encoder_fallback():
-    # unknown model -> mteb registry raises -> builtin Encoder, not a crash
-    from gym.encoders import Encoder, make_encoder
-    enc = make_encoder("not-a-real/model-xyz", task_name="NFCorpus")
-    assert isinstance(enc, Encoder)
-    assert make_encoder("any/model", task_name="NFCorpus", use_mteb=False).__class__ is Encoder
-    print("  make_encoder fallback ok")
 
 
 def test_query_gen_and_filter():
@@ -518,58 +494,23 @@ def test_rank_agreement_mteb_fallback():
     print("  rank agreement MTEB fallback ok")
 
 def test_corpus_control_resolution():
-    import os
-
-    from gym.config import GymConfig
+    # corpus controls are part of cache identity; uncapped runs keep their key
     from gym.gym import Gym
-
-    old_cap = os.environ.get("GYM_MAX_CORPUS_DOCS")
-    old_inject = os.environ.get("GYM_INJECT_QRELS_DOCS")
-
     gym = object.__new__(Gym)
-
-    try:
-        # Legacy behavior: environment variables still resolve when config is None.
-        os.environ["GYM_MAX_CORPUS_DOCS"] = "123"
-        os.environ["GYM_INJECT_QRELS_DOCS"] = "test"
-        gym.cfg = GymConfig()
-
-        assert gym._corpus_cap() == 123
-        assert gym._inject_qrels_docs() == "test"
-
-        # Explicit config must take precedence over the legacy environment.
-        gym.cfg = GymConfig(corpus_cap=456, inject_qrels_docs="dev")
-
-        assert gym._corpus_cap() == 456
-        assert gym._inject_qrels_docs() == "dev"
-
-        # Injection must participate in cache identity when a cap is active.
-        gym.gen_client = type("Client", (), {"model": "generator"})()
-        hash_dev = gym._query_config_hash()
-        gym.cfg.inject_qrels_docs = "test"
-        hash_test = gym._query_config_hash()
-        assert hash_dev != hash_test
-
-    finally:
-        if old_cap is None:
-            os.environ.pop("GYM_MAX_CORPUS_DOCS", None)
-        else:
-            os.environ["GYM_MAX_CORPUS_DOCS"] = old_cap
-
-        if old_inject is None:
-            os.environ.pop("GYM_INJECT_QRELS_DOCS", None)
-        else:
-            os.environ["GYM_INJECT_QRELS_DOCS"] = old_inject
-
+    gym.gen_client = type("Client", (), {"model": "generator"})()
+    gym.cfg = GymConfig(corpus_cap=456, inject_qrels_docs="dev")
+    capped = gym._query_config_hash()
+    gym.cfg.inject_qrels_docs = "test"
+    assert gym._query_config_hash() != capped
+    gym.cfg = GymConfig()
+    assert gym._query_config_hash() not in (capped,)
     print("  corpus control resolution ok")
 
 
 def test_judge_instruction_resolution():
-    import os
     from gym.config import GymConfig
     from gym.judge import _JUDGE_SYSTEM, judge_system
     from gym.results import judge_instruction_metadata as meta
-    os.environ.pop("GYM_JUDGE_INSTR_OVERRIDE", None)
     assert judge_system() == _JUDGE_SYSTEM  # generic prompt unchanged: caches rest on this
     assert meta(GymConfig(judge_instruction=None))["instruction"] is None
     assert meta(GymConfig(judge_instruction="Find docs that refute")) == {
@@ -623,8 +564,6 @@ def test_local_corpus():
 if __name__ == "__main__":
     print("Running MTEB Gym smoke tests...\n")
     test_json_extraction()
-    test_prefixes()
-    test_make_encoder_fallback()
     test_query_gen_and_filter()
     test_bm25()
     ratings = test_judge_and_scoring()

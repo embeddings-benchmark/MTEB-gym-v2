@@ -112,15 +112,9 @@ class OpenAICompatClient:
     def __init__(self, model: str, base_url: str | None = None,
                  api_key: str | None = None, max_tokens: int = 512,
                  max_retries: int = 4, extra_body: dict | None = None,
-                 timeout: float | None = None):
-        # Default comes from GYM_JUDGE_TIMEOUT so saturated serves (TP1 under
-        # concurrent columns) can be accommodated per-run without code edits.
-        if timeout is None:
-            import os as _os
-            timeout = float(_os.environ.get("GYM_JUDGE_TIMEOUT", "120"))
+                 timeout: float = 120.0):
         from openai import OpenAI
-        # timeout matters under the thread pool: one hung HTTP call would
-        # otherwise stall a worker forever with no error.
+        # a hung HTTP call would otherwise stall a pool worker forever
         self.client = OpenAI(
             base_url=base_url,
             api_key=api_key or os.environ.get("OPENAI_API_KEY", "EMPTY"),

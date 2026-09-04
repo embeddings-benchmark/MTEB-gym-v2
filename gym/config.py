@@ -17,8 +17,8 @@ class GymConfig:
     generator: str | None = None
     judge_base_url: str | None = None
     generator_base_url: str | None = None
-    # Explicit experiment-defining corpus controls. None preserves the legacy
-    # environment-variable behavior until Gym resolves them at runtime.
+    # Seeded subsample size for giant corpora, and (human-query arms) the qrels
+    # split whose judged documents are kept in the subsample.
     corpus_cap: int | None = None
     inject_qrels_docs: str | None = None
     # Unlabeled local corpus: a directory of .txt/.md files or a .jsonl with
@@ -46,11 +46,10 @@ class GymConfig:
 
     # --- retrieval ---
     top_k: int = 10
-    use_mteb_models: bool = True  # encode with mteb ModelMeta prompts; falls back to encoders._REGISTRY
+    encode_batch_size: int = 32   # per-model encode batch; lower for very long documents
 
     # --- judging ---
     flip_positions: bool = True   # run A/B and B/A to measure & cancel position bias
-    judge_batch_note: str = ""    # free-form tag stored in verdicts
     judge_workers: int = 8        # concurrent judge/filter calls; clients are
                                   # thread-safe and vLLM throughput needs batching
 

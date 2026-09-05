@@ -14,13 +14,14 @@ import hashlib
 import itertools
 import json
 import logging
+import os
 import random
 import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
 
-from .baselines import BM25Retriever, ColBERTRetriever
+from .baselines import ALIASES, MTEBSearchRetriever
 from .clients import AnthropicClient, MockClient, OpenAICompatClient
 from .config import GymConfig
 from .encoders import MTEBEncoder, cache_key
@@ -60,6 +61,11 @@ def _free_gpu() -> None:
 
 class Gym:
     def __init__(self, cfg: GymConfig, judge_client=None, gen_client=None):
+        stale = sorted(k for k in os.environ if k.startswith("GYM_"))
+        if stale:
+            raise RuntimeError(
+                f"{', '.join(stale)}: GYM_* environment variables are no longer read; use "
+                "GymConfig fields (corpus_cap, inject_qrels_docs, encode_batch_size, judge_instruction).")
         self.cfg = cfg
         cfg.ensure_dirs()
 
@@ -85,6 +91,7 @@ class Gym:
         self._retr_cache: dict[str, list] = {}
         self.leaderboard_str = ""
         self._corpus_subset = "default"                # hf_subset the corpus was read from
+        self._task_meta = None
         self._n_queries_generated: int | None = None   # pre-filter count, for the record
 
         # LLM-written queries should not be judged by the family that wrote them
@@ -190,19 +197,34 @@ class Gym:
         return queries
 
     # --------------------------------------------------------------- retrieval
+    def _task_metadata(self):
+        """mteb TaskMetadata (prompts, language) for encoding and search. A local
+        corpus has no task, so a generic English retrieval task's metadata stands
+        in, named after the run and without a prompt."""
+        if self._task_meta is None:
+            import mteb
+            if self.cfg.corpus_path:
+                meta = mteb.get_tasks(tasks=["NFCorpus"])[0].metadata
+                self._task_meta = meta.model_copy(update={"name": self.cfg.task_name, "prompt": None})
+            else:
+                self._task_meta = mteb.get_tasks(tasks=[self.cfg.task_name])[0].metadata
+        return self._task_meta
+
     def _retrieve(self, model_name: str, corpus, queries) -> list:
         if model_name in self._retr_cache:
             return self._retr_cache[model_name]
-        if model_name == "bm25":
-            retr = BM25Retriever(top_k=self.cfg.top_k).retrieve(corpus, queries)
-        elif model_name.startswith("colbert"):
-            retr = ColBERTRetriever(top_k=self.cfg.top_k).retrieve(corpus, queries)
-        else:
-            enc = MTEBEncoder(model_name, self.cfg.task_name, split=self.cfg.corpus_split,
-                              subset=self._corpus_subset, batch_size=self.cfg.encode_batch_size)
+        import mteb
+        mteb_name = ALIASES.get(model_name, model_name)
+        common = dict(split=self.cfg.corpus_split, subset=self._corpus_subset)
+        if "dense" in (mteb.get_model_meta(mteb_name).model_type or ["dense"]):
+            enc = MTEBEncoder(mteb_name, self._task_metadata(),
+                              batch_size=self.cfg.encode_batch_size, **common)
             retr = self.harness.retrieve(enc, corpus, queries)
             del enc
-            _free_gpu()   # 7B-class encoders otherwise accumulate on one GPU and OOM mid-tournament
+            _free_gpu()   # free GPU memory between encoders
+        else:   # bm25, colbert, learned sparse: mteb's index/search, no embedding cache
+            retr = MTEBSearchRetriever(mteb_name, self._task_metadata(), top_k=self.cfg.top_k,
+                                       **common).retrieve(corpus, queries)
         self._retr_cache[model_name] = retr
         return retr
 

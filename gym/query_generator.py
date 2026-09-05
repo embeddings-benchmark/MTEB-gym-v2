@@ -81,8 +81,7 @@ class QueryGenerator:
         self.client = client
         self.cfg = cfg
         self.rng = random.Random(cfg.seed)
-        # Number of successfully generated, heuristic-valid queries before
-        # quality filtering/dedup. Used only for reproducibility metadata.
+        # pre-filter count, for the result record
         self.last_generated_count: int | None = None
 
     # ---------------------------------------------------------------- generate
@@ -118,8 +117,7 @@ class QueryGenerator:
         out: list[Query] = []
         attempts = 0
         while len(out) < target and attempts < cap:
-            # One wave = the number of queries still missing. Failed/rejected
-            # attempts are retried by the next wave, never silently dropped.
+            # one wave = the queries still missing; failed attempts are retried by the next wave
             wave = min(target - len(out), cap - attempts)
             seeds = [self.rng.sample(doc_ids, min(self.cfg.docs_per_query, len(doc_ids)))
                      for _ in range(wave)]
@@ -134,7 +132,7 @@ class QueryGenerator:
                         enumerate(seeds)))
             for q in results:
                 if q and self._heuristic_ok(q.text):
-                    q.qid = f"q{len(out)}"   # qid = acceptance order, as before
+                    q.qid = f"q{len(out)}"   # qid = acceptance order
                     out.append(q)
             logger.info("query generation: %d/%d kept (%d attempts)",
                         len(out), target, attempts)
@@ -207,7 +205,7 @@ class QueryGenerator:
         self._llm_quality(queries)
         good = [q for q in queries if (q.quality or 0) >= self.cfg.filter_min_score]
         good = self._dedup(good)
-        # Re-id so downstream files are clean and stable.
+        # re-id in kept order
         for k, q in enumerate(good[: self.cfg.n_queries]):
             q.qid = f"q{k}"
         return good[: self.cfg.n_queries]

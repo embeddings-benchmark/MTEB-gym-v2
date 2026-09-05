@@ -117,9 +117,7 @@ def verdict_diagnostics(verdicts: list[Any]) -> dict[str, Any]:
     )
     ties = sum(1 for v in verdicts if float(v.score_a) == 0.5)
 
-    # Verdicts written before parsed_ok existed cannot tell us how many judge
-    # calls were made. Report those diagnostics as unknown rather than as zero
-    # or as a misleading partial rate on a mixed old/new cache.
+    # verdicts predating parsed_ok cannot say how many judge calls were made: report unknown, not zero
     judged = [
         v for v in verdicts
         if list(getattr(v, "raw", []) or []) != ["identical"]

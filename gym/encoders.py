@@ -67,19 +67,18 @@ def _shim_transformers5_for_jina() -> None:
 class MTEBEncoder:
     """Encodes with mteb's own model loader: ModelMeta prompts, pooling, dtype."""
 
-    def __init__(self, model_name: str, task_name: str, split: str = "test",
+    def __init__(self, model_name: str, task_metadata, split: str = "test",
                  subset: str = "default", batch_size: int = 32):
         self.model_name = model_name
-        self.task_name = task_name
+        self._task_meta = task_metadata
         self.split = split
         self.subset = subset
         self.batch_size = batch_size
         self._model = None
-        self._task_meta = None
 
     @property
     def cache_name(self) -> str:
-        return f"{self.model_name}+mteb"   # unchanged so existing embedding caches stay valid
+        return f"{self.model_name}+mteb"
 
     def _ensure_model(self):
         if self._model is None:
@@ -87,7 +86,6 @@ class MTEBEncoder:
                 _shim_transformers5_for_jina()
             import mteb
             self._model = mteb.get_model(self.model_name)
-            self._task_meta = mteb.get_tasks(tasks=[self.task_name])[0].metadata
 
     def _encode(self, texts: list[str], is_query: bool) -> np.ndarray:
         self._ensure_model()

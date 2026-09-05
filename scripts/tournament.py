@@ -22,7 +22,7 @@ import os
 from gym import Gym, GymConfig
 from gym.clients import AnthropicClient, MockClient, OpenAICompatClient
 
-# The original 7-model arena subset (open, sub-1B) + the bm25 anchor.
+# default roster: bm25 + seven sub-1B open models
 DEFAULT_MODELS = [
     "bm25",
     "sentence-transformers/all-MiniLM-L6-v2",

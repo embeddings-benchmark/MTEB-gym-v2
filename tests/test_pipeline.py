@@ -9,7 +9,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from gym.baselines import BM25Retriever
 from gym.clients import MockClient
 from gym.config import GymConfig
 from gym.judge import Judge, _parse_response
@@ -53,12 +52,35 @@ def test_query_gen_and_filter():
     print(f"  query gen+filter ok ({len(raw)} -> {len(kept)} kept)")
 
 
-def test_bm25():
+def test_search_retriever():
+    try:
+        import bm25s  # noqa: F401
+        import mteb
+    except ImportError:
+        print("  search retriever: mteb/bm25s absent, skipped")
+        return
+    from gym.baselines import MTEBSearchRetriever
+    meta = mteb.get_tasks(tasks=["NFCorpus"])[0].metadata
     corpus = make_corpus()
     queries = [Query("q0", "statins and heart disease evidence", ["D0"])]
-    res = BM25Retriever(top_k=5).retrieve(corpus, queries)
+    res = MTEBSearchRetriever("bm25", meta, top_k=5).retrieve(corpus, queries)
     assert len(res) == 1 and len(res[0].doc_ids) == 5
-    print("  bm25 retrieval ok")
+    assert all(d in corpus for d in res[0].doc_ids)
+    print("  search retriever (mteb bm25) ok")
+
+
+def test_env_knobs_rejected():
+    import os
+    from gym.gym import Gym
+    os.environ["GYM_MAX_CORPUS_DOCS"] = "5"
+    try:
+        Gym(GymConfig(judge="mock"))
+        raise AssertionError("a stale GYM_* variable must be rejected")
+    except RuntimeError as e:
+        assert "GYM_MAX_CORPUS_DOCS" in str(e)
+    finally:
+        del os.environ["GYM_MAX_CORPUS_DOCS"]
+    print("  stale env knobs rejected ok")
 
 
 def test_judge_and_scoring():
@@ -565,7 +587,8 @@ if __name__ == "__main__":
     print("Running MTEB Gym smoke tests...\n")
     test_json_extraction()
     test_query_gen_and_filter()
-    test_bm25()
+    test_search_retriever()
+    test_env_knobs_rejected()
     ratings = test_judge_and_scoring()
     test_correlation(ratings)
     test_exact_permutation_p()

@@ -19,9 +19,6 @@ import os
 import time
 
 
-# --------------------------------------------------------------------------- #
-# Mock                                                                        #
-# --------------------------------------------------------------------------- #
 class MockClient:
     """
     Deterministic pseudo-LLM. Same input -> same output, so test runs are
@@ -44,14 +41,10 @@ class MockClient:
         if "system a" in prompt.lower() or "result set" in prompt.lower():
             winner = ["A", "B", "tie"][h % 3]
             return json.dumps({"winner": winner, "confidence": "low", "reasoning": "mock"})
-        # generation
         return json.dumps({"query": f"what is the relationship between factor {h % 1000} "
                                     f"and clinical outcomes in affected patients"})
 
 
-# --------------------------------------------------------------------------- #
-# Anthropic                                                                   #
-# --------------------------------------------------------------------------- #
 class AnthropicClient:
     """Claude judge/generator via the Anthropic API."""
 
@@ -90,9 +83,6 @@ class AnthropicClient:
         return ""
 
 
-# --------------------------------------------------------------------------- #
-# OpenAI-compatible (OpenAI, Together, vLLM, Ollama, ...)                      #
-# --------------------------------------------------------------------------- #
 class OpenAICompatClient:
     """
     Talks to any OpenAI /chat/completions endpoint. This is the recommended way

@@ -14,8 +14,8 @@ from pathlib import Path
 import numpy as np
 
 # nDCG@10 anchors for entrants with no entry in the official results repo:
-# bm25 self-run with mteb/baseline-bm25s (test split); colbert = published
-# ColBERTv2 BEIR number. Extend as tasks are added.
+# bm25 self-run with mteb/baseline-bm25s (test split), the implementation the
+# gym itself runs; colbert = published ColBERTv2 BEIR number.
 BASELINE_NDCG = {
     "bm25": {"NFCorpus": 32.1, "SciFact": 68.63, "FiQA2018": 25.14, "ArguAna": 49.29},
     "colbert": {"NFCorpus": 33.8},
@@ -36,14 +36,12 @@ def fetch_truth(
         if m in BASELINE_NDCG and task in BASELINE_NDCG[m]:
             out[m] = BASELINE_NDCG[m][task]
 
-    # Mirror the normal MTEB evaluation path: populate the local cache from the
-    # official results repository, then evaluate only task/model cache misses.
+    # official results cache first; mteb evaluates only what is missing
     cache = mteb.ResultCache()
     try:
         cache.download_from_remote()
     except Exception:
-        # A remote-cache failure should not prevent using an existing local
-        # cache or evaluating the model directly.
+        # offline: fall back to the local cache or direct evaluation
         pass
 
     task_obj = next(iter(mteb.get_tasks(tasks=[task])), None)
@@ -55,8 +53,7 @@ def fetch_truth(
             continue
 
         try:
-            # ModelMeta lets mteb.evaluate inspect the cache before loading
-            # model weights. Fall back to get_model for unregistered models.
+            # ModelMeta lets mteb check the cache without loading weights
             try:
                 model_ref = mteb.get_model_meta(model)
             except Exception:
@@ -166,9 +163,7 @@ def correlate(gym_ratings: dict[str, float],
             boots.append(r)
     ci = (float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5))) if boots else (None, None)
 
-    # Restricted to the OFFICIALLY top-k models: does the ranking still hold
-    # among the good candidates, where a selection decision is actually made,
-    # or does the aggregate rho come from separating strong from weak?
+    # among the officially top-10 models only: where a selection decision is actually made
     top10 = None
     if len(shared) >= 12:
         top = np.argsort(-t)[:10]

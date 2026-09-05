@@ -15,7 +15,7 @@ def _retry(call, attempts: int):
         except Exception:  # noqa: BLE001 - transient API errors
             if i == attempts - 1:
                 raise
-            time.sleep(2 ** i)
+            time.sleep(2**i)
 
 
 def llm(model: str, base_url: str | None = None, api_key: str | None = None, **kwargs):
@@ -45,13 +45,15 @@ class MockClient:
             return json.dumps({"score": (h % 5) + 1, "reason": "mock"})
         if "system a" in prompt.lower():
             return json.dumps({"winner": ["A", "B", "tie"][h % 3], "confidence": "low", "reasoning": "mock"})
-        return json.dumps({"query": f"what is the relationship between factor {h % 1000} "
-                                    "and clinical outcomes in affected patients"})
+        return json.dumps(
+            {"query": f"what is the relationship between factor {h % 1000} and clinical outcomes in affected patients"}
+        )
 
 
 class AnthropicClient:
     def __init__(self, model: str, api_key: str | None = None, max_tokens: int = 512, max_retries: int = 4):
         import anthropic
+
         self.client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
         self.model = model
         self.max_tokens = max_tokens
@@ -60,9 +62,16 @@ class AnthropicClient:
     def chat(self, messages: list[dict], temperature: float = 0.0) -> str:
         system = "\n".join(m["content"] for m in messages if m["role"] == "system")
         convo = [m for m in messages if m["role"] != "system"]
-        resp = _retry(lambda: self.client.messages.create(model=self.model, max_tokens=self.max_tokens,
-                                                          temperature=temperature, system=system or None,
-                                                          messages=convo), self.max_retries)
+        resp = _retry(
+            lambda: self.client.messages.create(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                temperature=temperature,
+                system=system or None,
+                messages=convo,
+            ),
+            self.max_retries,
+        )
         return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
 
 
@@ -70,19 +79,35 @@ class OpenAICompatClient:
     """Any /chat/completions endpoint. For a local vLLM server:
     llm("<served-model-id>", base_url="http://localhost:8000/v1")."""
 
-    def __init__(self, model: str, base_url: str | None = None, api_key: str | None = None,
-                 max_tokens: int = 512, max_retries: int = 4, extra_body: dict | None = None,
-                 timeout: float = 120.0):
+    def __init__(
+        self,
+        model: str,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        max_tokens: int = 512,
+        max_retries: int = 4,
+        extra_body: dict | None = None,
+        timeout: float = 120.0,
+    ):
         from openai import OpenAI
-        self.client = OpenAI(base_url=base_url, api_key=api_key or os.environ.get("OPENAI_API_KEY", "EMPTY"),
-                             timeout=timeout)   # a hung call would otherwise stall a pool worker forever
+
+        self.client = OpenAI(
+            base_url=base_url, api_key=api_key or os.environ.get("OPENAI_API_KEY", "EMPTY"), timeout=timeout
+        )  # a hung call would otherwise stall a pool worker forever
         self.model = model
         self.max_tokens = max_tokens
         self.max_retries = max_retries
-        self.extra_body = extra_body   # vLLM knobs, e.g. {"chat_template_kwargs": {"enable_thinking": False}}
+        self.extra_body = extra_body  # vLLM knobs, e.g. {"chat_template_kwargs": {"enable_thinking": False}}
 
     def chat(self, messages: list[dict], temperature: float = 0.0) -> str:
-        resp = _retry(lambda: self.client.chat.completions.create(model=self.model, messages=messages,
-                                                                  temperature=temperature, max_tokens=self.max_tokens,
-                                                                  extra_body=self.extra_body), self.max_retries)
+        resp = _retry(
+            lambda: self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=self.max_tokens,
+                extra_body=self.extra_body,
+            ),
+            self.max_retries,
+        )
         return resp.choices[0].message.content or ""

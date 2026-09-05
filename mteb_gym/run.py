@@ -68,8 +68,10 @@ def _cached_queries(path: Path, gen: QueryGenerator, docs: dict[str, str]) -> tu
         logger.warning("empty query cache at %s (crash artifact); regenerating", path)
     queries = gen.run(docs)
     if not queries:
-        raise RuntimeError("query generation returned 0 queries: the generator endpoint is likely dead "
-                           "or the filter rejected everything")
+        raise RuntimeError(
+            "query generation returned 0 queries: the generator endpoint is likely dead "
+            "or the filter rejected everything"
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"n_generated": gen.n_generated, "queries": [asdict(q) for q in queries]}, indent=2))
     return queries, gen.n_generated
@@ -79,8 +81,9 @@ def _lists_fingerprint(ranked: list[Ranked]) -> str:
     return _sha(*(f"{r.qid}:{','.join(r.doc_ids)}" for r in ranked))
 
 
-def judge_pair_cached(vdir: Path, judge: Judge, a: str, b: str, ra: list[Ranked], rb: list[Ranked],
-                      top_k: int) -> list[Verdict]:
+def judge_pair_cached(
+    vdir: Path, judge: Judge, a: str, b: str, ra: list[Ranked], rb: list[Ranked], top_k: int
+) -> list[Verdict]:
     """Verdicts for one pair, cached on judge model, resolved prompt, top_k and both
     retrieved lists; streamed to JSONL as they complete so a crash resumes."""
     key = _sha(_model_id(judge.client), judge.system, top_k, _lists_fingerprint(ra), _lists_fingerprint(rb))
@@ -112,10 +115,23 @@ def judge_pair_cached(vdir: Path, judge: Judge, a: str, b: str, ra: list[Ranked]
     return verdicts
 
 
-def run(corpus: str | Path, models: list[str], judge, generator=None, *, n_queries: int = 100,
-        top_k: int = 10, seed: int = 0, out: str | Path = "results/run", arm: str = "synthetic",
-        intent: str | None = "auto", filter: bool = True, corpus_cap: int | None = None,
-        batch_size: int = 32, workers: int = 8) -> Result:
+def run(
+    corpus: str | Path,
+    models: list[str],
+    judge,
+    generator=None,
+    *,
+    n_queries: int = 100,
+    top_k: int = 10,
+    seed: int = 0,
+    out: str | Path = "results/run",
+    arm: str = "synthetic",
+    intent: str | None = "auto",
+    filter: bool = True,
+    corpus_cap: int | None = None,
+    batch_size: int = 32,
+    workers: int = 8,
+) -> Result:
     """Rank `models` on `corpus` (an mteb task name or a local path) with an LLM judge.
 
     `judge` and `generator` are LLM clients (see mteb_gym.llm); the generator defaults
@@ -140,7 +156,11 @@ def run(corpus: str | Path, models: list[str], judge, generator=None, *, n_queri
             raise ValueError(f"{corp.name} has no queries for a human-query arm")
         queries, n_generated, texts = None, None, corp.queries
     else:
-        qpath = out / "queries" / f"{corp.fingerprint}-{slug(_model_id(gen_client))}-{_sha(sorted(gen.params.items()))}.json"
+        qpath = (
+            out
+            / "queries"
+            / f"{corp.fingerprint}-{slug(_model_id(gen_client))}-{_sha(sorted(gen.params.items()))}.json"
+        )
         queries, n_generated = _cached_queries(qpath, gen, corp.docs)
         texts = {q.qid: q.text for q in queries}
     query_set = _sha(*(f"{k}:{v}" for k, v in texts.items()))
@@ -162,15 +182,22 @@ def run(corpus: str | Path, models: list[str], judge, generator=None, *, n_queri
     ratings = rate(verdicts, seed=seed)
 
     experiment = {
-        "arm": arm, "judge_model": _model_id(judge),
+        "arm": arm,
+        "judge_model": _model_id(judge),
         "generator_model": _model_id(gen_client) if arm == "synthetic" else None,
-        "intent": criterion, "intent_source": criterion_source, "judge_system": jd.system,
-        "n_queries_generated": n_generated, "n_queries": len(texts), "top_k": top_k, "seed": seed,
-        "corpus_cap": corpus_cap, **{f"gen_{k}": v for k, v in gen.params.items()}, "models": models,
+        "intent": criterion,
+        "intent_source": criterion_source,
+        "judge_system": jd.system,
+        "n_queries_generated": n_generated,
+        "n_queries": len(texts),
+        "top_k": top_k,
+        "seed": seed,
+        "corpus_cap": corpus_cap,
+        **{f"gen_{k}": v for k, v in gen.params.items()},
+        "models": models,
     }
     experiment["config_hash"] = record.config_hash(experiment)
-    rec = record.build(corp, experiment, ratings, verdicts, evaluation_time=time.time() - started,
-                       revisions=revisions)
+    rec = record.build(corp, experiment, ratings, verdicts, evaluation_time=time.time() - started, revisions=revisions)
     rdir = record.result_directory(out / "results", experiment)
     rdir.mkdir(parents=True, exist_ok=True)
     rpath = rdir / f"{corp.name}.json"

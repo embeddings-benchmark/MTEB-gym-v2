@@ -99,24 +99,41 @@ def rate(verdicts, bootstrap: int = BOOTSTRAP, seed: int = 0) -> list[ModelRatin
             lo, hi = np.percentile(boot, 2.5, axis=0), np.percentile(boot, 97.5, axis=0)
 
     idx = {n: i for i, n in enumerate(names)}
-    w, l, t, n = (np.zeros(len(names)) for _ in range(4))
+    wins, losses, ties, games = (np.zeros(len(names)) for _ in range(4))
     for v in verdicts:
         a, b = idx[v.model_a], idx[v.model_b]
-        n[a] += 1; n[b] += 1
+        games[a] += 1
+        games[b] += 1
         if v.score_a > 0.5:
-            w[a] += 1; l[b] += 1
+            wins[a] += 1
+            losses[b] += 1
         elif v.score_a < 0.5:
-            l[a] += 1; w[b] += 1
+            losses[a] += 1
+            wins[b] += 1
         else:
-            t[a] += 1; t[b] += 1
-    out = [ModelRating(names[i], float(point[i]), float(lo[i]), float(hi[i]),
-                       float(w[i]), float(l[i]), float(t[i]), int(n[i])) for i in range(len(names))]
+            ties[a] += 1
+            ties[b] += 1
+    out = [
+        ModelRating(
+            names[i],
+            float(point[i]),
+            float(lo[i]),
+            float(hi[i]),
+            float(wins[i]),
+            float(losses[i]),
+            float(ties[i]),
+            int(games[i]),
+        )
+        for i in range(len(names))
+    ]
     return sorted(out, key=lambda m: m.rating, reverse=True)
 
 
 def format_leaderboard(ratings: list[ModelRating]) -> str:
     lines = ["=" * 78, f"{'Rank':<5}{'Model':<38}{'Rating':>8}{'CI±':>7}{'W':>5}{'L':>5}{'T':>5}", "-" * 78]
     for i, m in enumerate(ratings, 1):
-        lines.append(f"{i:<5}{m.name.split('/')[-1][:36]:<38}{m.rating:>8.0f}{m.ci:>7.0f}"
-                     f"{m.wins:>5.0f}{m.losses:>5.0f}{m.ties:>5.0f}")
+        lines.append(
+            f"{i:<5}{m.name.split('/')[-1][:36]:<38}{m.rating:>8.0f}{m.ci:>7.0f}"
+            f"{m.wins:>5.0f}{m.losses:>5.0f}{m.ties:>5.0f}"
+        )
     return "\n".join(lines + ["=" * 78])

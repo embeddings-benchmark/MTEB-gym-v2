@@ -15,8 +15,9 @@ from typing import Any
 def config_hash(config: dict[str, Any], length: int = 8) -> str:
     """Stable short hash over the experiment-defining config (never over itself)."""
     payload = {k: v for k, v in config.items() if k != "config_hash"}
-    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"),
-                                     default=str).encode()).hexdigest()[:length]
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()[
+        :length
+    ]
 
 
 def _version(name: str) -> str | None:
@@ -28,8 +29,9 @@ def _version(name: str) -> str | None:
 
 def git_revision() -> str | None:
     try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[1],
-                                       text=True, stderr=subprocess.DEVNULL).strip()
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[1], text=True, stderr=subprocess.DEVNULL
+        ).strip()
     except (OSError, subprocess.CalledProcessError):
         return None
 
@@ -68,8 +70,14 @@ def verdict_diagnostics(verdicts: list[Any]) -> dict[str, Any]:
     }
 
 
-def build(corpus, experiment: dict[str, Any], ratings: list[Any], verdicts: list[Any],
-          evaluation_time: float, revisions: dict[str, str | None] | None = None) -> dict[str, Any]:
+def build(
+    corpus,
+    experiment: dict[str, Any],
+    ratings: list[Any],
+    verdicts: list[Any],
+    evaluation_time: float,
+    revisions: dict[str, str | None] | None = None,
+) -> dict[str, Any]:
     dataset = getattr(corpus.metadata, "dataset", None) or {}
     return {
         "task_name": corpus.name,
@@ -81,7 +89,18 @@ def build(corpus, experiment: dict[str, Any], ratings: list[Any], verdicts: list
         "evaluation_time": float(evaluation_time),
         "config": experiment,
         "diagnostics": verdict_diagnostics(verdicts),
-        "ratings": [{"model": m.name, "revision": (revisions or {}).get(m.name), "rating": m.rating,
-                     "ci_low": m.ci_low, "ci_high": m.ci_high, "wins": m.wins, "losses": m.losses,
-                     "ties": m.ties, "n": m.n} for m in ratings],
-    }   # rank_agreement adds "agreement" when official scores are available
+        "ratings": [
+            {
+                "model": m.name,
+                "revision": (revisions or {}).get(m.name),
+                "rating": m.rating,
+                "ci_low": m.ci_low,
+                "ci_high": m.ci_high,
+                "wins": m.wins,
+                "losses": m.losses,
+                "ties": m.ties,
+                "n": m.n,
+            }
+            for m in ratings
+        ],
+    }  # rank_agreement adds "agreement" when official scores are available

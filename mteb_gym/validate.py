@@ -17,7 +17,9 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-def fetch_truth(models: list[str], task: str, *, evaluate_missing: bool = False) -> tuple[dict[str, float], dict[str, str]]:
+def fetch_truth(
+    models: list[str], task: str, *, evaluate_missing: bool = False
+) -> tuple[dict[str, float], dict[str, str]]:
     """Official main score (nDCG@10, x100) per model on `task`, and per model whether
     it was "official" or "self-run"."""
     import mteb
@@ -56,8 +58,9 @@ def _tau_ap(g: np.ndarray, t: np.ndarray) -> float:
     return float(2.0 * total / (n - 1) - 1.0)
 
 
-def correlate(gym_ratings: dict[str, float], ground_truth: dict[str, float],
-              bootstrap: int = 1000, seed: int = 0) -> dict:
+def correlate(
+    gym_ratings: dict[str, float], ground_truth: dict[str, float], bootstrap: int = 1000, seed: int = 0
+) -> dict:
     """Rank agreement over the models present in both dicts."""
     from scipy.stats import kendalltau, spearmanr
 
@@ -81,23 +84,29 @@ def correlate(gym_ratings: dict[str, float], ground_truth: dict[str, float],
     ci = [float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5))] if boots else [None, None]
 
     top10 = None
-    if len(shared) >= 12:   # among the officially top-10 models only: where a selection decision is made
+    if len(shared) >= 12:  # among the officially top-10 models only: where a selection decision is made
         top = np.argsort(-t)[:10]
         r10, _ = spearmanr(g[top], t[top])
         top10 = None if np.isnan(r10) else float(r10)
 
     return {
-        "n_models": len(shared), "models": shared,
-        "spearman_rho": float(rho), "spearman_p": float(p_rho),
-        "kendall_tau": float(tau), "kendall_p": float(p_tau),
-        "spearman_top10": top10, "kendall_ap": _tau_ap(g, t), "spearman_ci95": ci,
+        "n_models": len(shared),
+        "models": shared,
+        "spearman_rho": float(rho),
+        "spearman_p": float(p_rho),
+        "kendall_tau": float(tau),
+        "kendall_p": float(p_tau),
+        "spearman_top10": top10,
+        "kendall_ap": _tau_ap(g, t),
+        "spearman_ci95": ci,
         "gym_ranking": sorted(shared, key=lambda m: -gym_ratings[m]),
         "truth_ranking": sorted(shared, key=lambda m: -ground_truth[m]),
     }
 
 
-def rank_agreement(results_dir: str | Path, *, evaluate_missing: bool = False,
-                   bootstrap: int = 1000, seed: int = 0) -> dict[str, dict]:
+def rank_agreement(
+    results_dir: str | Path, *, evaluate_missing: bool = False, bootstrap: int = 1000, seed: int = 0
+) -> dict[str, dict]:
     """Agreement with the official MTEB ranking for every gym result record under
     `results_dir` (or one record file); written into each record as "agreement"."""
     root = Path(results_dir)
@@ -106,7 +115,7 @@ def rank_agreement(results_dir: str | Path, *, evaluate_missing: bool = False,
     for path in paths:
         data = json.loads(path.read_text())
         if not {"task_name", "ratings", "config"} <= set(data):
-            continue   # only gym result records; other JSON files in the tree are ignored
+            continue  # only gym result records; other JSON files in the tree are ignored
         ratings = {r["model"]: r["rating"] for r in data["ratings"]}
         truth, source = fetch_truth(list(ratings), data["task_name"], evaluate_missing=evaluate_missing)
         agreement = correlate(ratings, truth, bootstrap=bootstrap, seed=seed)

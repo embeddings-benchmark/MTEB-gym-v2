@@ -96,15 +96,15 @@ mteb_gym/
 └── run.py        the pipeline, every stage cached on disk
 ```
 
-## Testing
-
-Run offline tests:
+## Development
 
 ```bash
-python tests/test_pipeline.py
+make install     # uv sync with the retrieval extra and dev tools
+make test        # pytest; the end-to-end test runs when mteb is installed
+make lint        # ruff format + check
 ```
 
-They run on a mock LLM and cover query generation determinism, judging, Bradley-Terry, the verdict cache and resume, the result record, and rank agreement. The end-to-end test runs when mteb and a cached MiniLM are available.
+Tests run on a mock LLM: no network, no GPU, no API key. CI runs them on Python 3.10 and 3.13 with mteb installed.
 
 ## Citation
 

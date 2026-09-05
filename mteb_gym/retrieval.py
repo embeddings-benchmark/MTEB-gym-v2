@@ -14,6 +14,7 @@ from .corpus import Corpus
 @dataclass
 class Ranked:
     """One model's top-k for one query."""
+
     qid: str
     query: str
     doc_ids: list[str]
@@ -32,13 +33,20 @@ def predict(model_name: str, task, folder: Path, *, batch_size: int = 32) -> Pat
     if not path.exists():
         import mteb
 
-        mteb.evaluate(mteb.get_model(model_name), task, prediction_folder=folder,
-                      cache=None, encode_kwargs={"batch_size": batch_size}, show_progress_bar=False)
+        mteb.evaluate(
+            mteb.get_model(model_name),
+            task,
+            prediction_folder=folder,
+            cache=None,
+            encode_kwargs={"batch_size": batch_size},
+            show_progress_bar=False,
+        )
         gc.collect()
         try:
             import torch
+
             if torch.cuda.is_available():
-                torch.cuda.empty_cache()   # free GPU memory between models
+                torch.cuda.empty_cache()  # free GPU memory between models
         except ImportError:
             pass
     return path

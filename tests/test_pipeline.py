@@ -1,17 +1,12 @@
-"""
-Smoke tests for mteb_gym with the mock LLM: no network, no GPU, no API key.
-Run: python tests/test_pipeline.py. The end-to-end test needs mteb, bm25s and a
-locally cached all-MiniLM-L6-v2 and is skipped otherwise.
-"""
+"""Tests for mteb_gym on the mock LLM: no network, no GPU, no API key. The
+end-to-end test needs mteb, bm25s and sentence-transformers and is skipped otherwise."""
 
 import json
-import shutil
-import sys
 import tempfile
 import types
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import pytest
 
 from mteb_gym import record, validate
 from mteb_gym.judge import Judge, Verdict, judge_system, task_prompt
@@ -28,17 +23,18 @@ def make_corpus(n=40):
 
 
 def fake_ranked(seed, queries, k=5):
-    return [Ranked(q.qid, q.text, [f"D{seed}{j}" for j in range(k)], [f"result {seed}-{q.qid}-{j}" for j in range(k)])
-            for q in queries]
+    return [
+        Ranked(q.qid, q.text, [f"D{seed}{j}" for j in range(k)], [f"result {seed}-{q.qid}-{j}" for j in range(k)])
+        for q in queries
+    ]
 
 
 def test_extract_json():
     assert extract_json('```json\n{"winner": "A"}\n```')["winner"] == "A"
     assert extract_json('blah {"score": 4} trailing')["score"] == 4
     assert extract_json("not json") == {}
-    assert extract_json('Let me think {"winner": "B"} ... final {"winner": "A"}')["winner"] == "A"   # last object wins
+    assert extract_json('Let me think {"winner": "B"} ... final {"winner": "A"}')["winner"] == "A"  # last object wins
     assert extract_json('{"reasoning": "set {x} wins", "winner": "B"}')["winner"] == "B"
-    print("  json extraction ok")
 
 
 def test_query_generation():
@@ -55,11 +51,13 @@ def test_query_generation():
 
     def gen_with(workers, client):
         return QueryGenerator(client, n_queries=12, filter=False, workers=workers).generate(corpus)
+
     for client in (MockClient, Flaky):
         seq, par = gen_with(1, client()), gen_with(4, client())
         assert len(seq) == 12
-        assert [(q.qid, q.text, tuple(q.seed_doc_ids)) for q in par] == [(q.qid, q.text, tuple(q.seed_doc_ids)) for q in seq]
-    print("  query generation ok (filtered, deterministic across workers)")
+        assert [(q.qid, q.text, tuple(q.seed_doc_ids)) for q in par] == [
+            (q.qid, q.text, tuple(q.seed_doc_ids)) for q in seq
+        ]
 
 
 def test_judge():
@@ -73,30 +71,35 @@ def test_judge():
     class Exploding:
         def chat(self, messages, temperature=0.0):
             raise AssertionError("judge must not be called for identical result sets")
+
     v = Judge(Exploding()).judge_all(ra[:1], fake_ranked("a", queries[:1]), "m_a", "m_b")[0]
     assert v.score_a == 0.5 and v.raw == ["identical"]
 
     class Garbage:
         def chat(self, messages, temperature=0.0):
             return "I refuse to answer in the requested format."
+
     verdicts = Judge(Garbage()).judge_all(ra[:5], rb[:5], "m_a", "m_b")
     assert all(v.score_a == 0.5 for v in verdicts)
     assert record.verdict_diagnostics(verdicts)["parse_failure_rate"] == 1.0
-    print("  judge ok (deterministic, identical short-circuit, parse failures counted)")
 
 
 def test_rank():
     def v(qid, a, b, score):
         return Verdict(qid=qid, query="q", model_a=a, model_b=b, score_a=score)
+
     verdicts = []
     for i in range(20):
-        verdicts += [v(f"q{i}", "winner", "mid", 0.75), v(f"q{i}", "mid", "loser", 1.0), v(f"q{i}", "winner", "loser", 1.0)]
+        verdicts += [
+            v(f"q{i}", "winner", "mid", 0.75),
+            v(f"q{i}", "mid", "loser", 1.0),
+            v(f"q{i}", "winner", "loser", 1.0),
+        ]
     ratings = rate(verdicts, bootstrap=100)
     assert [r.name for r in ratings] == ["winner", "mid", "loser"]
     assert ratings[-1].rating < ratings[1].rating - 50, "a model that loses every verdict must sink"
     assert all(r.ci >= 0 for r in ratings)
-    print(format_leaderboard(ratings))
-    print("  bradley-terry ok")
+    assert format_leaderboard(ratings).count("\n") == 6
 
 
 def test_correlate():
@@ -104,30 +107,35 @@ def test_correlate():
     res = validate.correlate(g, dict(g), bootstrap=50)
     assert abs(res["spearman_rho"] - 1.0) < 1e-9
     import numpy as np
+
     truth = {f"m{i}": float(i) for i in range(25)}
-    top = list(range(15, 25)); np.random.default_rng(0).shuffle(top)
+    top = list(range(15, 25))
+    np.random.default_rng(0).shuffle(top)
     gym = {f"m{i}": float(v) for i, v in zip(range(15, 25), top)} | {f"m{i}": float(i) for i in range(15)}
     out = validate.correlate(gym, truth, bootstrap=0)
-    assert out["spearman_rho"] > 0.85 and abs(out["spearman_top10"]) < 0.6   # strong models shuffled among themselves
+    assert out["spearman_rho"] > 0.85 and abs(out["spearman_top10"]) < 0.6  # strong models shuffled among themselves
     a = np.arange(10, dtype=float)
     assert validate._tau_ap(a, a) == 1.0 and validate._tau_ap(-a, a) == -1.0
-    print("  correlation ok")
 
 
 def test_instruction():
     assert task_prompt("Represent this biology post for searching relevant passages: ") is None
-    assert task_prompt({"query": "Given a claim, find documents that refute the claim"}) == "Given a claim, find documents that refute the claim"
+    assert (
+        task_prompt({"query": "Given a claim, find documents that refute the claim"})
+        == "Given a claim, find documents that refute the claim"
+    )
     assert task_prompt(None) is None
-    corpus = types.SimpleNamespace(metadata=types.SimpleNamespace(prompt="Given a claim, find documents that refute the claim"))
+    corpus = types.SimpleNamespace(
+        metadata=types.SimpleNamespace(prompt="Given a claim, find documents that refute the claim")
+    )
     assert resolve_intent("auto", corpus) == ("Given a claim, find documents that refute the claim", "mteb:task_prompt")
     assert resolve_intent(None, corpus) == (None, None)
     assert resolve_intent("Prefer replies that resolve the ticket", corpus)[1] == "config:intent"
     gen = QueryGenerator(MockClient(), intent="Given a claim, find documents that refute the claim")
-    assert "refute the claim" in gen.system and gen.params["intent"]   # intent conditions generation and its cache key
+    assert "refute the claim" in gen.system and gen.params["intent"]  # intent conditions generation and its cache key
     assert "retrieval task is" not in QueryGenerator(MockClient()).system
     assert "refute the claim" in judge_system("Given a claim, find documents that refute the claim")
     assert "retrieval task is" not in judge_system(None)
-    print("  judge instruction ok")
 
 
 def test_verdict_cache():
@@ -152,43 +160,64 @@ def test_verdict_cache():
         files[0].unlink()
         calls["n"] = 0
         resumed = judge_pair_cached(vdir, judge, "m_a", "m_b", ra, rb, top_k=5)
-        assert [v.qid for v in resumed] == [q.qid for q in queries] and calls["n"] == 8, "resume judges only the 4 missing"
+        assert [v.qid for v in resumed] == [q.qid for q in queries] and calls["n"] == 8, (
+            "resume judges only the 4 missing"
+        )
         # a change in one model's retrieval must not reuse the cached verdicts
         calls["n"] = 0
         judge_pair_cached(vdir, judge, "m_a", "m_b", ra, fake_ranked("c", queries), top_k=5)
         assert calls["n"] == 12 and len(list(vdir.glob("*.json"))) == 2
-    print("  verdict cache ok (resume, retrieval-keyed)")
 
 
 def test_record():
     assert record.config_hash({"a": 1, "b": [2, 3]}) == record.config_hash({"b": [2, 3], "a": 1})
-    verdicts = [Verdict("q0", "q", "a", "b", 1.0, raw=["A", "B"], parsed_ok=[True, True]),
-                Verdict("q1", "q", "a", "b", 0.5, raw=["identical"]),
-                Verdict("q2", "q", "a", "b", 0.5, raw=["tie", "tie"], parsed_ok=[False, True])]
+    verdicts = [
+        Verdict("q0", "q", "a", "b", 1.0, raw=["A", "B"], parsed_ok=[True, True]),
+        Verdict("q1", "q", "a", "b", 0.5, raw=["identical"]),
+        Verdict("q2", "q", "a", "b", 0.5, raw=["tie", "tie"], parsed_ok=[False, True]),
+    ]
     d = record.verdict_diagnostics(verdicts)
-    assert d == {"judge_calls": 4, "n_comparisons": 3, "commit_rate": 1 / 3, "tie_rate": 2 / 3,
-                 "a_first_rate": 0.5, "parse_failure_rate": 0.25, "identical_retrieval_rate": 1 / 3}
-    corpus = types.SimpleNamespace(name="demo", fingerprint="abc", metadata=types.SimpleNamespace(
-        dataset={"path": "x", "revision": "y"}))
+    assert d == {
+        "judge_calls": 4,
+        "n_comparisons": 3,
+        "commit_rate": 1 / 3,
+        "tie_rate": 2 / 3,
+        "a_first_rate": 0.5,
+        "parse_failure_rate": 0.25,
+        "identical_retrieval_rate": 1 / 3,
+    }
+    corpus = types.SimpleNamespace(
+        name="demo", fingerprint="abc", metadata=types.SimpleNamespace(dataset={"path": "x", "revision": "y"})
+    )
     exp = {"arm": "synthetic", "judge_model": "mock", "generator_model": "mock", "seed": 0}
     exp["config_hash"] = record.config_hash(exp)
     rec = record.build(corpus, exp, rate(verdicts, bootstrap=0), verdicts, evaluation_time=1.0)
     assert rec["task_name"] == "demo" and rec["diagnostics"]["tie_rate"] == 2 / 3 and len(rec["ratings"]) == 2
     assert record.result_directory(Path("r"), exp) == Path("r") / "mock__mock" / exp["config_hash"]
-    print("  record ok")
 
 
 def test_rank_agreement_api():
     original = validate.fetch_truth
-    validate.fetch_truth = lambda models, task, **kw: ({"model_a": 30.0, "model_b": 20.0, "model_c": 10.0},
-                                                      {m: "official" for m in models})
+    validate.fetch_truth = lambda models, task, **kw: (
+        {"model_a": 30.0, "model_b": 20.0, "model_c": 10.0},
+        {m: "official" for m in models},
+    )
     try:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "NFCorpus.json"
-            path.write_text(json.dumps({
-                "task_name": "NFCorpus",
-                "ratings": [{"model": "model_a", "rating": 1100}, {"model": "model_b", "rating": 1000}, {"model": "model_c", "rating": 900}],
-                "config": {}}))
+            path.write_text(
+                json.dumps(
+                    {
+                        "task_name": "NFCorpus",
+                        "ratings": [
+                            {"model": "model_a", "rating": 1100},
+                            {"model": "model_b", "rating": 1000},
+                            {"model": "model_c", "rating": 900},
+                        ],
+                        "config": {},
+                    }
+                )
+            )
             out = validate.rank_agreement(path, bootstrap=100, seed=0)
             agreement = json.loads(path.read_text())["agreement"]
             assert agreement["spearman_rho"] == 1.0 and agreement["kendall_tau"] == 1.0
@@ -196,17 +225,12 @@ def test_rank_agreement_api():
             assert out[str(path)] == agreement
     finally:
         validate.fetch_truth = original
-    print("  rank agreement API ok")
 
 
 def test_end_to_end_local_corpus():
-    try:
-        import bm25s  # noqa: F401
-        import mteb  # noqa: F401
-        import sentence_transformers  # noqa: F401
-    except ImportError:
-        print("  end-to-end: mteb/bm25s/sentence-transformers absent, skipped")
-        return
+    mteb = pytest.importorskip("mteb")
+    pytest.importorskip("bm25s")
+    pytest.importorskip("sentence_transformers")
     from mteb_gym import run
 
     calls = {"n": 0}
@@ -217,27 +241,26 @@ def test_end_to_end_local_corpus():
             return super().chat(messages, temperature)
 
     with tempfile.TemporaryDirectory() as tmp:
-        docs = Path(tmp) / "docs"; docs.mkdir()
+        docs = Path(tmp) / "docs"
+        docs.mkdir()
         for did, text in make_corpus(12).items():
             (docs / f"{did}.txt").write_text(text)
-        kw = dict(models=["mteb/baseline-bm25s", "sentence-transformers/all-MiniLM-L6-v2"], judge=Counting(), n_queries=4,
-                  filter=False, out=Path(tmp) / "out", workers=1)
+        kw = dict(
+            models=["mteb/baseline-bm25s", "sentence-transformers/all-MiniLM-L6-v2"],
+            judge=Counting(),
+            n_queries=4,
+            filter=False,
+            out=Path(tmp) / "out",
+            workers=1,
+        )
         res = run(docs, **kw)
         assert len(res.ratings) == 2 and res.record_path.exists()
         rec = json.loads(res.record_path.read_text())
-        assert rec["config"]["n_queries"] == 4 and rec["config"]["intent"] is None   # local corpus: generic criterion
-        import mteb
-        assert all(r["revision"] == mteb.get_model_meta(r["model"]).revision for r in rec["ratings"])   # mteb's pins carried over
+        assert rec["config"]["n_queries"] == 4 and rec["config"]["intent"] is None  # local corpus: generic criterion
+        assert all(
+            r["revision"] == mteb.get_model_meta(r["model"]).revision for r in rec["ratings"]
+        )  # mteb's pins carried over
         assert len(list((Path(tmp) / "out" / "predictions").rglob("*_predictions.json"))) == 2
-        first, calls["n"] = calls["n"], 0
-        again = run(docs, **kw)   # everything cached: no LLM calls, same ratings
+        calls["n"] = 0
+        again = run(docs, **kw)  # everything cached: no LLM calls, same ratings
         assert calls["n"] == 0 and [r.rating for r in again.ratings] == [r.rating for r in res.ratings]
-    print(f"  end-to-end local corpus ok ({first} LLM calls first run, 0 on rerun)")
-
-
-if __name__ == "__main__":
-    print("Running MTEB Gym smoke tests...\n")
-    for t in (test_extract_json, test_query_generation, test_judge, test_rank, test_correlate,
-              test_instruction, test_verdict_cache, test_record, test_rank_agreement_api, test_end_to_end_local_corpus):
-        t()
-    print("\nAll smoke tests passed.")

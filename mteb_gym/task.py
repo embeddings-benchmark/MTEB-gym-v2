@@ -26,12 +26,18 @@ def build(corpus: Corpus, queries: list[Query] | None):
         qrels = {q.qid: {d: 1 for d in q.seed_doc_ids} for q in queries}
 
     ids = list(corpus.docs)
-    data = {"default": {"test": {
-        "corpus": Dataset.from_dict({"id": ids, "title": [""] * len(ids), "text": [corpus.docs[i] for i in ids]}),
-        "queries": Dataset.from_dict({"id": list(texts), "text": list(texts.values())}),
-        "relevant_docs": qrels,
-        "top_ranked": None,
-    }}}
+    data = {
+        "default": {
+            "test": {
+                "corpus": Dataset.from_dict(
+                    {"id": ids, "title": [""] * len(ids), "text": [corpus.docs[i] for i in ids]}
+                ),
+                "queries": Dataset.from_dict({"id": list(texts), "text": list(texts.values())}),
+                "relevant_docs": qrels,
+                "top_ranked": None,
+            }
+        }
+    }
 
     def load_data(self, **kwargs):
         self.dataset = data

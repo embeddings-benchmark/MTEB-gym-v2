@@ -116,12 +116,8 @@ def rate(verdicts, base=1000.0, scale=400.0, bootstrap=1000, seed=0) -> list[Mod
 
     point = _ratings(verdicts)
 
-    # Bootstrap CIs: resample QUERIES (clusters of verdicts), not individual
-    # verdicts. In a round-robin every query produces one verdict per model
-    # pair, so verdicts sharing a qid are correlated (same query difficulty,
-    # same retrieved sets); resampling them independently understates the CI
-    # width. Chatbot Arena resamples battles because each battle is an
-    # independent prompt — our sampling unit is the query.
+    # Resample queries, not verdicts: every query yields one verdict per pair, so
+    # verdicts sharing a qid are correlated and per-verdict resampling understates the CI.
     rng = np.random.default_rng(seed)
     if bootstrap and len(verdicts) > 1:
         by_qid: dict[str, list] = {}

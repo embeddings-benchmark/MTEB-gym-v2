@@ -78,7 +78,7 @@ class MTEBEncoder:
 
     @property
     def cache_name(self) -> str:
-        return f"{self.model_name}+mteb"   # unchanged so existing embedding caches stay valid
+        return f"{self.model_name}+mteb"
 
     def _ensure_model(self):
         if self._model is None:

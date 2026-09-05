@@ -17,13 +17,10 @@ class GymConfig:
     generator: str | None = None
     judge_base_url: str | None = None
     generator_base_url: str | None = None
-    # Seeded subsample size for giant corpora, and (human-query arms) the qrels
-    # split whose judged documents are kept in the subsample.
+    # corpus_cap: seeded subsample size; inject_qrels_docs: qrels split whose judged docs stay in it
     corpus_cap: int | None = None
     inject_qrels_docs: str | None = None
-    # Unlabeled local corpus: a directory of .txt/.md files or a .jsonl with
-    # id/text fields. When set, task_name is just the record label and
-    # judge_instruction supplies the relevance criterion (no registry entry).
+    # Local corpus: a directory of .txt/.md files or a .jsonl with id/text; task_name is then a label.
     corpus_path: str | None = None
     # Judge criterion: "auto" = the task's own mteb prompt (generic when it has
     # none or corpus_path is set); None = generic; other text = used verbatim.
@@ -35,11 +32,9 @@ class GymConfig:
     gen_overshoot: float = 1.6    # generate this multiple of n_queries before filtering
     min_query_chars: int = 15
     max_query_chars: int = 240
-    gen_workers: int = 16         # concurrent generation calls; results are
-                                  # order-preserving, so worker count never
-                                  # changes the generated query set
+    gen_workers: int = 16         # concurrent generation calls (order-preserving)
 
-    # --- query filtering (the biggest correlation lever) ---
+    # --- query filtering ---
     filter_queries: bool = True
     filter_min_score: int = 3     # LLM quality score 1-5; keep >= this
     dedup_threshold: float = 0.92 # cosine-dup cutoff on a cheap encoder
@@ -50,8 +45,7 @@ class GymConfig:
 
     # --- judging ---
     flip_positions: bool = True   # run A/B and B/A to measure & cancel position bias
-    judge_workers: int = 8        # concurrent judge/filter calls; clients are
-                                  # thread-safe and vLLM throughput needs batching
+    judge_workers: int = 8        # concurrent judge/filter calls
 
     # --- scoring ---
     bootstrap_samples: int = 1000

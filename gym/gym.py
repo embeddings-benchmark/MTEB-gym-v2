@@ -221,7 +221,7 @@ class Gym:
                               batch_size=self.cfg.encode_batch_size, **common)
             retr = self.harness.retrieve(enc, corpus, queries)
             del enc
-            _free_gpu()   # 7B-class encoders otherwise accumulate on one GPU and OOM mid-tournament
+            _free_gpu()   # free GPU memory between encoders
         else:   # bm25, colbert, learned sparse: mteb's index/search, no embedding cache
             retr = MTEBSearchRetriever(mteb_name, self._task_metadata(), top_k=self.cfg.top_k,
                                        **common).retrieve(corpus, queries)

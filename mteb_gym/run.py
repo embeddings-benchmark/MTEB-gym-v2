@@ -60,12 +60,13 @@ class Result:
         return validate.rank_agreement(self.record_path, **kwargs)
 
 
-def resolve_instruction(judge_instruction: str | None, corpus) -> tuple[str | None, str | None]:
-    """"auto": the task's own mteb prompt (generic when it has none); None: generic; text: verbatim."""
-    if judge_instruction == "auto":
+def resolve_intent(intent: str | None, corpus) -> tuple[str | None, str | None]:
+    """The task criterion given to the generator and the judge. "auto": the task's
+    own mteb prompt (generic when it has none); None: generic; text: verbatim."""
+    if intent == "auto":
         p = task_prompt(getattr(corpus.metadata, "prompt", None))
         return (p, "mteb:task_prompt") if p else (None, None)
-    return (judge_instruction, "config:judge_instruction") if judge_instruction else (None, None)
+    return (intent, "config:intent") if intent else (None, None)
 
 
 def _cached_queries(path: Path, gen: QueryGenerator, docs: dict[str, str]) -> tuple[list[Query], int | None]:
@@ -122,7 +123,7 @@ def judge_pair_cached(vdir: Path, judge: Judge, a: str, b: str, ra: list[Ranked]
 
 def run(corpus: str | Path, models: list[str], judge, generator=None, *, n_queries: int = 100,
         top_k: int = 10, seed: int = 0, out: str | Path = "results/run", arm: str = "synthetic",
-        judge_instruction: str | None = "auto", filter: bool = True, flip_positions: bool = True,
+        intent: str | None = "auto", filter: bool = True, flip_positions: bool = True,
         split: str = "test", corpus_cap: int | None = None, inject_qrels_split: str | None = None,
         encode_batch_size: int = 32, judge_workers: int = 8, gen_workers: int = 16,
         bootstrap: int = 1000) -> Result:
@@ -130,8 +131,8 @@ def run(corpus: str | Path, models: list[str], judge, generator=None, *, n_queri
 
     `judge` and `generator` are clients from `mteb_gym.llm`; the generator defaults
     to the judge. `arm="human"` uses the task's own queries and qrels instead of
-    synthetic queries. `judge_instruction`: "auto" = the task's own criterion, None
-    = generic relevance, or text."""
+    synthetic queries. `intent` conditions both generation and judging: "auto" = the
+    task's own criterion, None = generic relevance, or text."""
     started = time.time()
     out, models = Path(out), list(models)
     if not models:
@@ -145,7 +146,9 @@ def run(corpus: str | Path, models: list[str], judge, generator=None, *, n_queri
 
     corp = corpus_mod.load(corpus, split=split, cap=corpus_cap, seed=seed, inject_qrels_split=inject_qrels_split)
 
-    gen = QueryGenerator(gen_client, n_queries=n_queries, seed=seed, filter=filter, workers=gen_workers)
+    criterion, criterion_source = resolve_intent(intent, corp)
+    gen = QueryGenerator(gen_client, intent=criterion, n_queries=n_queries, seed=seed, filter=filter,
+                         workers=gen_workers)
     if arm == "human":
         if not corp.queries:
             raise ValueError(f"{corp.name} has no queries for a human-query arm")
@@ -158,12 +161,13 @@ def run(corpus: str | Path, models: list[str], judge, generator=None, *, n_queri
 
     gym_task = task_mod.build(corp, queries)
     ranked: dict[str, list[Ranked]] = {}
+    revisions: dict[str, str | None] = {}
     for m in models:
         path = retrieval.predict(m, gym_task, out / "predictions" / slug(m) / query_set, batch_size=encode_batch_size)
         ranked[m] = retrieval.top_k(path, corp, texts, top_k)
+        revisions[m] = retrieval.revision(path)
 
-    instruction, source = resolve_instruction(judge_instruction, corp)
-    jd = Judge(judge, instruction=instruction, flip_positions=flip_positions, workers=judge_workers)
+    jd = Judge(judge, instruction=criterion, flip_positions=flip_positions, workers=judge_workers)
     verdicts: list[Verdict] = []
     for i, (a, b) in enumerate(itertools.combinations(models, 2), 1):
         logger.info("pair %d/%d: %s vs %s", i, len(models) * (len(models) - 1) // 2, a, b)
@@ -174,14 +178,15 @@ def run(corpus: str | Path, models: list[str], judge, generator=None, *, n_queri
     experiment = {
         "arm": arm, "judge_model": _model_id(judge),
         "generator_model": _model_id(gen_client) if arm == "synthetic" else None,
-        "instruction": instruction, "instruction_source": source, "judge_system": jd.system,
+        "intent": criterion, "intent_source": criterion_source, "judge_system": jd.system,
         "n_queries_generated": n_generated, "n_queries": len(texts), "top_k": top_k, "seed": seed,
         "flip_positions": flip_positions, "corpus_split": split, "corpus_cap": corpus_cap,
         "inject_qrels_split": inject_qrels_split, "bootstrap": bootstrap,
         **{f"gen_{k}": v for k, v in gen.params.items()}, "models": models,
     }
     experiment["config_hash"] = record.config_hash(experiment)
-    rec = record.build(corp, experiment, ratings, verdicts, evaluation_time=time.time() - started)
+    rec = record.build(corp, experiment, ratings, verdicts, evaluation_time=time.time() - started,
+                       revisions=revisions)
     rdir = record.result_directory(out / "results", experiment)
     rdir.mkdir(parents=True, exist_ok=True)
     rpath = rdir / f"{corp.name}.json"

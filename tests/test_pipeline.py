@@ -19,7 +19,7 @@ from mteb_gym.llm import MockClient
 from mteb_gym.queries import Query, QueryGenerator, extract_json
 from mteb_gym.rank import format_leaderboard, rate
 from mteb_gym.retrieval import Ranked
-from mteb_gym.run import judge_pair_cached, resolve_instruction
+from mteb_gym.run import judge_pair_cached, resolve_intent
 
 
 def make_corpus(n=40):
@@ -120,9 +120,12 @@ def test_instruction():
     assert task_prompt({"query": "Given a claim, find documents that refute the claim"}) == "Given a claim, find documents that refute the claim"
     assert task_prompt(None) is None
     corpus = types.SimpleNamespace(metadata=types.SimpleNamespace(prompt="Given a claim, find documents that refute the claim"))
-    assert resolve_instruction("auto", corpus) == ("Given a claim, find documents that refute the claim", "mteb:task_prompt")
-    assert resolve_instruction(None, corpus) == (None, None)
-    assert resolve_instruction("Prefer replies that resolve the ticket", corpus)[1] == "config:judge_instruction"
+    assert resolve_intent("auto", corpus) == ("Given a claim, find documents that refute the claim", "mteb:task_prompt")
+    assert resolve_intent(None, corpus) == (None, None)
+    assert resolve_intent("Prefer replies that resolve the ticket", corpus)[1] == "config:intent"
+    gen = QueryGenerator(MockClient(), intent="Given a claim, find documents that refute the claim")
+    assert "refute the claim" in gen.system and gen.params["intent"]   # intent conditions generation and its cache key
+    assert "retrieval task is" not in QueryGenerator(MockClient()).system
     assert "refute the claim" in judge_system("Given a claim, find documents that refute the claim")
     assert "retrieval task is" not in judge_system(None)
     print("  judge instruction ok")
@@ -216,12 +219,14 @@ def test_end_to_end_local_corpus():
         docs = Path(tmp) / "docs"; docs.mkdir()
         for did, text in make_corpus(12).items():
             (docs / f"{did}.txt").write_text(text)
-        kw = dict(models=["bm25", "sentence-transformers/all-MiniLM-L6-v2"], judge=Counting(), n_queries=4,
+        kw = dict(models=["mteb/baseline-bm25s", "sentence-transformers/all-MiniLM-L6-v2"], judge=Counting(), n_queries=4,
                   filter=False, bootstrap=20, out=Path(tmp) / "out", judge_workers=1, gen_workers=1)
         res = run(docs, **kw)
         assert len(res.ratings) == 2 and res.record_path.exists()
         rec = json.loads(res.record_path.read_text())
-        assert rec["config"]["n_queries"] == 4 and rec["config"]["instruction"] is None   # local corpus: generic judge
+        assert rec["config"]["n_queries"] == 4 and rec["config"]["intent"] is None   # local corpus: generic criterion
+        import mteb
+        assert all(r["revision"] == mteb.get_model_meta(r["model"]).revision for r in rec["ratings"])   # mteb's pins carried over
         assert len(list((Path(tmp) / "out" / "predictions").rglob("*_predictions.json"))) == 2
         first, calls["n"] = calls["n"], 0
         again = run(docs, **kw)   # everything cached: no LLM calls, same ratings

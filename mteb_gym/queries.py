@@ -27,12 +27,13 @@ class Query:
 
 
 _GEN_SYSTEM = (
-    "You write realistic search queries for evaluating retrieval systems. "
+    "You write realistic search queries for evaluating retrieval systems. {task}"
     "Given a few documents from a corpus, produce ONE natural query a real user "
     "might type that is answerable using the corpus but is NOT a restatement of "
     "any single shown document. Vary phrasing and specificity. "
     "Reply with strict JSON: {\"query\": \"...\"}"
 )
+_GEN_TASK = "The retrieval task is: {intent}. Every query must express that kind of need. "
 
 _FILTER_SYSTEM = (
     "You rate the quality of search queries for benchmarking retrieval models. "
@@ -62,13 +63,15 @@ def extract_json(text: str) -> dict:
 
 
 class QueryGenerator:
-    def __init__(self, client, *, n_queries: int = 100, seed: int = 0, filter: bool = True,
-                 workers: int = 16, docs_per_query: int = 3, overshoot: float = 1.6,
+    def __init__(self, client, *, intent: str | None = None, n_queries: int = 100, seed: int = 0,
+                 filter: bool = True, workers: int = 16, docs_per_query: int = 3, overshoot: float = 1.6,
                  min_chars: int = 15, max_chars: int = 240, min_score: int = 3, dedup: float = 0.92):
         self.client = client
-        self.params = dict(n_queries=n_queries, seed=seed, filter=filter, docs_per_query=docs_per_query,
-                           overshoot=overshoot, min_chars=min_chars, max_chars=max_chars,
-                           min_score=min_score, dedup=dedup)   # everything that changes the query set
+        self.params = dict(intent=intent, n_queries=n_queries, seed=seed, filter=filter,
+                           docs_per_query=docs_per_query, overshoot=overshoot, min_chars=min_chars,
+                           max_chars=max_chars, min_score=min_score, dedup=dedup)   # everything that changes the query set
+        task = _GEN_TASK.format(intent=intent.rstrip(".")) if intent else ""
+        self.system = _GEN_SYSTEM.replace("{task}", task)
         self.workers = max(1, workers)
         self.n_generated: int | None = None   # pre-filter count, for the record
 
@@ -80,7 +83,7 @@ class QueryGenerator:
     # ---------------------------------------------------------------- generate
     def _one(self, doc_ids: list[str], docs: dict[str, str], idx: int) -> Query | None:
         snippet = "\n\n".join(f"[{i+1}] {docs[d][:600]}" for i, d in enumerate(doc_ids))
-        msg = [{"role": "system", "content": _GEN_SYSTEM},
+        msg = [{"role": "system", "content": self.system},
                {"role": "user", "content": f"Documents:\n{snippet}\n\nWrite one query as JSON."}]
         try:
             text = (extract_json(self.client.chat(msg, temperature=0.7)).get("query") or "").strip()

@@ -82,7 +82,7 @@ def verdict_diagnostics(verdicts: list[Any]) -> dict[str, Any]:
 
 
 def build(corpus, experiment: dict[str, Any], ratings: list[Any], verdicts: list[Any],
-          evaluation_time: float) -> dict[str, Any]:
+          evaluation_time: float, revisions: dict[str, str | None] | None = None) -> dict[str, Any]:
     diag = verdict_diagnostics(verdicts)
     dataset = getattr(corpus.metadata, "dataset", None) or {}
     row = {
@@ -106,6 +106,7 @@ def build(corpus, experiment: dict[str, Any], ratings: list[Any], verdicts: list
         "judge_calls": diag["judge_calls"],
         "config": experiment,
         "scores": {"test": [row]},
-        "ratings": [{"model": m.name, "rating": m.rating, "ci_low": m.ci_low, "ci_high": m.ci_high,
-                     "wins": m.wins, "losses": m.losses, "ties": m.ties, "n": m.n} for m in ratings],
+        "ratings": [{"model": m.name, "revision": (revisions or {}).get(m.name), "rating": m.rating,
+                     "ci_low": m.ci_low, "ci_high": m.ci_high, "wins": m.wins, "losses": m.losses,
+                     "ties": m.ties, "n": m.n} for m in ratings],
     }

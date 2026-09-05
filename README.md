@@ -25,7 +25,7 @@ import mteb_gym as gym
 
 result = gym.run(
     corpus="NFCorpus",                     # any MTEB retrieval task, or a directory / .jsonl of your own documents
-    models=["bm25", "BAAI/bge-base-en-v1.5", "intfloat/e5-base-v2"],   # MTEB model ids
+    models=["mteb/baseline-bm25s", "BAAI/bge-base-en-v1.5", "intfloat/e5-base-v2"],   # MTEB model ids
     judge=gym.llm("Qwen/Qwen3-8B", base_url="http://localhost:8000/v1"),   # any OpenAI-compatible endpoint
     generator=gym.llm("claude-sonnet-4-5"),                                # a different model family from the judge
     n_queries=100,
@@ -38,7 +38,7 @@ print(result.agreement())   # only for an MTEB task: how well the ranking agrees
 Or from the shell:
 
 ```bash
-mteb-gym --corpus NFCorpus --models bm25 BAAI/bge-base-en-v1.5 --judge Qwen/Qwen3-8B --judge-url http://localhost:8000/v1
+mteb-gym --corpus NFCorpus --models mteb/baseline-bm25s BAAI/bge-base-en-v1.5 --judge Qwen/Qwen3-8B --judge-url http://localhost:8000/v1
 ```
 
 Models run through mteb itself (`mteb.evaluate` on a task the gym builds from the corpus and its queries), so prompts, revisions, similarity functions and sparse / late-interaction paths are exactly those of an official MTEB run.

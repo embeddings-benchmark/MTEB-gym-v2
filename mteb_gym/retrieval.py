@@ -10,9 +10,6 @@ from pathlib import Path
 
 from .corpus import Corpus
 
-ALIASES = {"bm25": "mteb/baseline-bm25s", "colbert": "colbert-ir/colbertv2.0"}
-
-
 @dataclass
 class Ranked:
     """One model's top-k for one query."""
@@ -34,7 +31,7 @@ def predict(model_name: str, task, folder: Path, *, batch_size: int = 32) -> Pat
     if not path.exists():
         import mteb
 
-        mteb.evaluate(mteb.get_model(ALIASES.get(model_name, model_name)), task, prediction_folder=folder,
+        mteb.evaluate(mteb.get_model(model_name), task, prediction_folder=folder,
                       cache=None, encode_kwargs={"batch_size": batch_size}, show_progress_bar=False)
         gc.collect()
         try:
@@ -44,6 +41,11 @@ def predict(model_name: str, task, folder: Path, *, batch_size: int = 32) -> Pat
         except ImportError:
             pass
     return path
+
+
+def revision(path: Path) -> str | None:
+    """The model revision mteb recorded in its prediction file."""
+    return (json.loads(path.read_text()).get("mteb_model_meta") or {}).get("revision")
 
 
 def top_k(path: Path, corpus: Corpus, queries: dict[str, str], k: int) -> list[Ranked]:

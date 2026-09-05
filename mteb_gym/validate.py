@@ -17,8 +17,8 @@ import numpy as np
 # bm25 self-run with mteb/baseline-bm25s (test split); colbert = published
 # ColBERTv2 BEIR number. Extend as tasks are added.
 BASELINE_NDCG = {
-    "bm25": {"NFCorpus": 32.1, "SciFact": 68.63, "FiQA2018": 25.14, "ArguAna": 49.29},
-    "colbert": {"NFCorpus": 33.8},
+    "mteb/baseline-bm25s": {"NFCorpus": 32.1, "SciFact": 68.63, "FiQA2018": 25.14, "ArguAna": 49.29},
+    "colbert-ir/colbertv2.0": {"NFCorpus": 33.8},
 }
 
 
@@ -51,7 +51,7 @@ def fetch_truth(
         return out
 
     for model in models:
-        if "/" not in model:  # baselines are anchored above
+        if model in BASELINE_NDCG:  # anchored above
             continue
 
         try:

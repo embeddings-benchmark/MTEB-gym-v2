@@ -15,15 +15,14 @@ dependencies = [
 
 [project.optional-dependencies]
 # retrieval models + MTEB corpora
-retrieval = ["sentence-transformers>=2.7", "mteb>=1.39", "torch"]
+retrieval = ["sentence-transformers>=2.7", "mteb>=2.0", "torch"]
 # judge backends
 claude = ["anthropic>=0.40"]
 openai = ["openai>=1.40"]   # also covers vLLM / Together / local Qwen3 servers
-hf = ["huggingface_hub>=0.24"]
 # everything
 full = [
-    "sentence-transformers>=2.7", "mteb>=1.39", "torch",
-    "anthropic>=0.40", "openai>=1.40", "huggingface_hub>=0.24",
+    "sentence-transformers>=2.7", "mteb>=2.0", "torch",
+    "anthropic>=0.40", "openai>=1.40",
 ]
 
 [tool.setuptools]

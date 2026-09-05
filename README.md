@@ -94,7 +94,7 @@ For a genuinely unlabeled corpus, validation is optional — the Gym leaderboard
 ```text
 gym/
 ├── config.py             experiment configuration
-├── encoders.py           model-aware encoding
+├── encoders.py           encoding through mteb
 ├── clients.py            LLM clients
 ├── query_generator.py    query generation + filtering
 ├── retrieval_harness.py  retrieval + caching

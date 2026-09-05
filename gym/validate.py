@@ -13,11 +13,12 @@ from pathlib import Path
 
 import numpy as np
 
-BM25_NDCG = {
-    "NFCorpus": 32.1,
-    "SciFact": 68.63,
-    "FiQA2018": 25.14,
-    "ArguAna": 49.29,
+# nDCG@10 anchors for entrants with no entry in the official results repo:
+# bm25 self-run with mteb/baseline-bm25s (test split); colbert = published
+# ColBERTv2 BEIR number. Extend as tasks are added.
+BASELINE_NDCG = {
+    "bm25": {"NFCorpus": 32.1, "SciFact": 68.63, "FiQA2018": 25.14, "ArguAna": 49.29},
+    "colbert": {"NFCorpus": 33.8},
 }
 
 
@@ -31,9 +32,9 @@ def fetch_truth(
 
     out: dict[str, float] = {}
 
-    # BM25 is a reference anchor rather than an embedding model in MTEB.
-    if "bm25" in models and task in BM25_NDCG:
-        out["bm25"] = BM25_NDCG[task]
+    for m in models:
+        if m in BASELINE_NDCG and task in BASELINE_NDCG[m]:
+            out[m] = BASELINE_NDCG[m][task]
 
     # Mirror the normal MTEB evaluation path: populate the local cache from the
     # official results repository, then evaluate only task/model cache misses.
@@ -50,7 +51,7 @@ def fetch_truth(
         return out
 
     for model in models:
-        if model == "bm25" or "/" not in model:
+        if "/" not in model:  # baselines are anchored above
             continue
 
         try:
@@ -93,16 +94,6 @@ def fetch_truth(
 
     return out
 
-
-
-def _load_gym(path: str) -> dict[str, float]:
-    """Load ratings from either legacy leaderboard.json or standardized results."""
-    data = json.loads(Path(path).read_text())
-
-    if "ratings" in data:
-        return {m["model"]: m["rating"] for m in data["ratings"]}
-
-    return {m["name"]: m["rating"] for m in data["models"]}
 
 
 def _exact_permutation_p(g: np.ndarray, t: np.ndarray, max_n: int = 8) -> float | None:
@@ -265,7 +256,3 @@ def rank_agreement(
         out[str(result_path)] = agreement
 
     return out
-
-
-def report(gym_path: str, ground_truth: dict[str, float], **kw) -> dict:
-    return correlate(_load_gym(gym_path), ground_truth, **kw)

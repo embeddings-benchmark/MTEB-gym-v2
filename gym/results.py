@@ -94,13 +94,7 @@ def client_model_id(client: Any) -> str | None:
 
 def judge_instruction_metadata(cfg: Any) -> dict[str, Any]:
     """Resolve the judge instruction, one path for Judge and the record:
-    env override > config text > "auto": the task's mteb prompt > generic."""
-    import os
-
-    override = os.environ.get("GYM_JUDGE_INSTR_OVERRIDE") or None
-    if override is not None:
-        return {"instruction": override,
-                "instruction_source": "env:GYM_JUDGE_INSTR_OVERRIDE"}
+    config text > "auto": the task's own mteb prompt > generic (None)."""
     instr, source = cfg.judge_instruction, "config:judge_instruction"
     if instr == "auto":
         instr, source = None, "mteb:task_prompt"
@@ -113,7 +107,6 @@ def judge_instruction_metadata(cfg: Any) -> dict[str, Any]:
     if not instr:
         return {"instruction": None, "instruction_source": None}
     return {"instruction": instr, "instruction_source": source}
-
 
 def verdict_diagnostics(verdicts: list[Any]) -> dict[str, Any]:
     """Diagnostics computed only from persisted Verdict fields."""
@@ -172,14 +165,10 @@ def build_result_record(
     n_queries: int,
     hf_subset: str,
     evaluation_time: float,
-    corpus_cap: int | None,
-    inject_qrels_docs: str | None,
     judge_system: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build an MTEB-like result record plus its hash-defining config."""
-    import os
-
-    task = task_identity(cfg.task_name, getattr(cfg, "corpus_path", None))
+    task = task_identity(cfg.task_name, cfg.corpus_path)
     instruction = judge_instruction_metadata(cfg)
     diag = verdict_diagnostics(verdicts)
 
@@ -203,15 +192,13 @@ def build_result_record(
         "dedup_threshold": cfg.dedup_threshold,
         "top_k": cfg.top_k,
         "seed": cfg.seed,
-        "method": cfg.method,
         "bootstrap_samples": cfg.bootstrap_samples,
         "flip_positions": cfg.flip_positions,
-        "use_mteb_models": cfg.use_mteb_models,
         "elo_base": cfg.elo_base,
         "elo_scale": cfg.elo_scale,
         "corpus_split": cfg.corpus_split,
-        "corpus_cap": corpus_cap,
-        "inject_qrels_docs": inject_qrels_docs,
+        "corpus_cap": cfg.corpus_cap,
+        "inject_qrels_docs": cfg.inject_qrels_docs,
         "models": list(models),
     }
     experiment_config["config_hash"] = experiment_config_hash(experiment_config)

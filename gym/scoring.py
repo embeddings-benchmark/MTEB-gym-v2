@@ -1,18 +1,11 @@
 """
 Rating from pairwise verdicts.
 
-Verdicts carry a fractional `score_a` in [0, 1] (see judge.py). We fold these
-into a win matrix W where W[i][j] is the total fractional wins of model i over j,
-then fit ratings two ways:
-
-  bradley_terry : MLE strengths via the MM algorithm (Hunter 2004), converted to
-                  an Elo-style scale. This is the principled choice for a fixed
-                  batch of comparisons and is what Chatbot Arena / AlpacaEval use.
-  elo           : classic online Elo, order-dependent, kept for parity/debugging.
-
-Both report bootstrap confidence intervals by resampling queries (clusters of
-correlated verdicts), showing how much the ranking can be trusted given the
-number of comparisons.
+Verdicts carry a fractional `score_a` in [0, 1] (see judge.py). They are folded
+into a win matrix W (W[i][j] = fractional wins of model i over j) and fit with
+Bradley-Terry via the MM algorithm (Hunter 2004), reported on an Elo-style
+scale, as Chatbot Arena and AlpacaEval do. Confidence intervals come from
+bootstrap resampling of queries (clusters of correlated verdicts).
 """
 
 from __future__ import annotations
@@ -98,17 +91,6 @@ def _bt_to_elo(p: np.ndarray, base: float, scale: float) -> np.ndarray:
     return r - r.mean() + base
 
 
-def _online_elo(verdicts, names, base, scale, k=32) -> np.ndarray:
-    idx = {n: i for i, n in enumerate(names)}
-    r = np.full(len(names), base, dtype=np.float64)
-    for v in verdicts:
-        a, b = idx[v.model_a], idx[v.model_b]
-        ea = 1.0 / (1.0 + 10 ** ((r[b] - r[a]) / scale))
-        r[a] += k * (v.score_a - ea)
-        r[b] += k * ((1 - v.score_a) - (1 - ea))
-    return r
-
-
 def _tally(verdicts, names):
     idx = {n: i for i, n in enumerate(names)}
     w = np.zeros(len(names)); l = np.zeros(len(names)); t = np.zeros(len(names)); n = np.zeros(len(names))
@@ -124,15 +106,12 @@ def _tally(verdicts, names):
     return w, l, t, n
 
 
-def rate(verdicts, method="bradley_terry", base=1000.0, scale=400.0,
-         bootstrap=1000, seed=0) -> list[ModelRating]:
+def rate(verdicts, base=1000.0, scale=400.0, bootstrap=1000, seed=0) -> list[ModelRating]:
     if not verdicts:
         return []
     names = _index_models(verdicts)
 
     def _ratings(vs) -> np.ndarray:
-        if method == "elo":
-            return _online_elo(vs, names, base, scale)
         return _bt_to_elo(_bradley_terry(_win_matrix(vs, names)), base, scale)
 
     point = _ratings(verdicts)

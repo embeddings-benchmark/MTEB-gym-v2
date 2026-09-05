@@ -9,8 +9,6 @@ so the generator and judge never care which model is behind it:
   AnthropicClient       Claude (api.anthropic.com)
   OpenAICompatClient    anything speaking the OpenAI /chat/completions schema:
                         OpenAI, Together, Fireworks, or a local vLLM/TGI server
-  HFQwen3Client         Qwen3 via huggingface_hub InferenceClient (rate-limited)
-  EnsembleClient        majority/median vote over several judges
 """
 
 from __future__ import annotations
@@ -19,7 +17,6 @@ import hashlib
 import json
 import os
 import time
-from collections import Counter
 
 
 # --------------------------------------------------------------------------- #
@@ -56,11 +53,7 @@ class MockClient:
 # Anthropic                                                                   #
 # --------------------------------------------------------------------------- #
 class AnthropicClient:
-    """
-    Claude judge/generator. Default model is Haiku — by far the cheapest option
-    and plenty strong for pairwise relevance judgements. Swap to Sonnet/Opus via
-    `model=` if you want a stronger judge for the validation table.
-    """
+    """Claude judge/generator via the Anthropic API."""
 
     def __init__(self, model: str,
                  max_tokens: int = 512, api_key: str | None = None,
@@ -119,15 +112,9 @@ class OpenAICompatClient:
     def __init__(self, model: str, base_url: str | None = None,
                  api_key: str | None = None, max_tokens: int = 512,
                  max_retries: int = 4, extra_body: dict | None = None,
-                 timeout: float | None = None):
-        # Default comes from GYM_JUDGE_TIMEOUT so saturated serves (TP1 under
-        # concurrent columns) can be accommodated per-run without code edits.
-        if timeout is None:
-            import os as _os
-            timeout = float(_os.environ.get("GYM_JUDGE_TIMEOUT", "120"))
+                 timeout: float = 120.0):
         from openai import OpenAI
-        # timeout matters under the thread pool: one hung HTTP call would
-        # otherwise stall a worker forever with no error.
+        # a hung HTTP call would otherwise stall a pool worker forever
         self.client = OpenAI(
             base_url=base_url,
             api_key=api_key or os.environ.get("OPENAI_API_KEY", "EMPTY"),
@@ -157,55 +144,3 @@ class OpenAICompatClient:
         return ""
 
 
-# --------------------------------------------------------------------------- #
-# HF InferenceClient Qwen3 (convenient but rate-limited on the free tier)     #
-# --------------------------------------------------------------------------- #
-class HFQwen3Client:
-    """Qwen3 via huggingface_hub. Handy for a quick try; rate-limited when free."""
-
-    def __init__(self, model: str,
-                 token: str | None = None, max_tokens: int = 512):
-        from huggingface_hub import InferenceClient
-        self.client = InferenceClient(model=model, token=token or os.environ.get("HF_TOKEN"))
-        self.model = model
-        self.max_tokens = max_tokens
-
-    def chat(self, messages: list[dict], temperature: float = 0.0) -> str:
-        resp = self.client.chat_completion(
-            messages=messages, max_tokens=self.max_tokens,
-            temperature=max(temperature, 1e-3),
-        )
-        return resp.choices[0].message.content or ""
-
-
-# --------------------------------------------------------------------------- #
-# Ensemble                                                                    #
-# --------------------------------------------------------------------------- #
-class EnsembleClient:
-    """
-    Runs several judges and combines their JSON verdicts. We don't try to parse
-    here — we just hand back the *individual* responses joined, and let the judge
-    layer aggregate (it already knows the verdict schema). Use `vote()` for a
-    clean majority over already-parsed winners.
-    """
-
-    def __init__(self, clients: list):
-        if not clients:
-            raise ValueError("EnsembleClient needs at least one client")
-        self.clients = clients
-
-    def chat(self, messages: list[dict], temperature: float = 0.0) -> str:
-        # Return a JSON array of member responses; judge layer handles it.
-        return json.dumps([c.chat(messages, temperature) for c in self.clients])
-
-    @staticmethod
-    def vote(winners: list[str]) -> tuple[str, float]:
-        """Majority winner + agreement fraction. Ties broken to 'tie'."""
-        counts = Counter(winners)
-        top, n = counts.most_common(1)[0]
-        agreement = n / len(winners)
-        # If the top two are tied in count, the panel disagrees -> tie.
-        most = counts.most_common(2)
-        if len(most) > 1 and most[0][1] == most[1][1]:
-            return "tie", agreement
-        return top, agreement

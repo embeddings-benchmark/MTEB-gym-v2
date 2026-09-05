@@ -30,18 +30,8 @@ from .retrieval import Ranked, slug
 
 logger = logging.getLogger(__name__)
 
-_FAMILIES = {"claude": ("claude", "haiku", "sonnet", "opus"), "gpt": ("gpt-", "o1", "o3", "o4"),
-             "qwen": ("qwen",), "gemini": ("gemini", "gemma"), "llama": ("llama",),
-             "mistral": ("mistral", "mixtral"), "deepseek": ("deepseek",)}
-
-
 def _model_id(client) -> str:
     return str(getattr(client, "model", type(client).__name__))
-
-
-def _family(client) -> str | None:
-    mid = _model_id(client).lower()
-    return next((f for f, marks in _FAMILIES.items() if any(m in mid for m in marks)), None)
 
 
 def _sha(*parts) -> str:
@@ -140,9 +130,6 @@ def run(corpus: str | Path, models: list[str], judge, generator=None, *, n_queri
     gen_client = generator if generator is not None else judge
     if generator is None:
         logger.warning("no generator given: the judge also writes the queries (self-preference risk)")
-    elif _family(gen_client) and _family(gen_client) == _family(judge):
-        logger.warning("generator and judge are both '%s' family; use different families for clean validation",
-                       _family(judge))
 
     corp = corpus_mod.load(corpus, split=split, cap=corpus_cap, seed=seed, inject_qrels_split=inject_qrels_split)
 

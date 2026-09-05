@@ -30,6 +30,7 @@ from .retrieval import Ranked, slug
 
 logger = logging.getLogger(__name__)
 
+
 def _model_id(client) -> str:
     return str(getattr(client, "model", type(client).__name__))
 

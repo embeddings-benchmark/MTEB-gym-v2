@@ -9,10 +9,19 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def fingerprint(docs: dict[str, str]) -> str:
+    """Content hash over ids and texts, in order."""
+    h = hashlib.sha256()
+    for did, text in docs.items():
+        h.update(did.encode()); h.update(b"\x00"); h.update(text.encode()); h.update(b"\x01")
+    return h.hexdigest()[:12]
 
 
 @dataclass
@@ -22,13 +31,10 @@ class Corpus:
     metadata: object                                   # mteb TaskMetadata
     queries: dict[str, str] | None = None              # the task's own queries (human-query arm)
     qrels: dict[str, dict[str, int]] | None = None     # the task's own relevance labels
-    fingerprint: str = field(init=False)               # content hash over ids and texts, in order
 
-    def __post_init__(self):
-        h = hashlib.sha256()
-        for did, text in self.docs.items():
-            h.update(did.encode()); h.update(b"\x00"); h.update(text.encode()); h.update(b"\x01")
-        self.fingerprint = h.hexdigest()[:12]
+    @cached_property
+    def fingerprint(self) -> str:
+        return fingerprint(self.docs)
 
 
 def load(spec: str | Path, *, cap: int | None = None, seed: int = 0, keep_judged: bool = False) -> Corpus:
@@ -91,11 +97,10 @@ def _load_local(root: Path, cap: int | None, seed: int) -> Corpus:
     if cap and len(docs) > cap:
         keep = random.Random(seed).sample(sorted(docs), cap)
         docs = {k: docs[k] for k in keep}
-    corpus = Corpus(name=root.stem, docs=docs, metadata=None)
     # no benchmark task behind a local corpus: minimal metadata, no task prompt
-    corpus.metadata = TaskMetadata(
+    metadata = TaskMetadata(
         name=root.stem, description=f"Local corpus {root}", type="Retrieval", category="t2t",
         modalities=["text"], eval_splits=["test"], eval_langs=["eng-Latn"], main_score="ndcg_at_10",
-        dataset={"path": str(root), "revision": corpus.fingerprint},
+        dataset={"path": str(root), "revision": fingerprint(docs)},
     )
-    return corpus
+    return Corpus(name=root.stem, docs=docs, metadata=metadata)

@@ -99,26 +99,18 @@ def correlate(gym_ratings: dict[str, float], ground_truth: dict[str, float],
 def rank_agreement(results_dir: str | Path, *, evaluate_missing: bool = False,
                    bootstrap: int = 1000, seed: int = 0) -> dict[str, dict]:
     """Agreement with the official MTEB ranking for every gym result record under
-    `results_dir` (or one record file); written into each record's scores row."""
+    `results_dir` (or one record file); written into each record as "agreement"."""
     root = Path(results_dir)
     paths = [root] if root.is_file() else sorted(root.rglob("*.json"))
     out: dict[str, dict] = {}
     for path in paths:
         data = json.loads(path.read_text())
-        if not {"task_name", "ratings", "scores"} <= set(data):
+        if not {"task_name", "ratings", "config"} <= set(data):
             continue   # only gym result records; other JSON files in the tree are ignored
         ratings = {r["model"]: r["rating"] for r in data["ratings"]}
         truth, source = fetch_truth(list(ratings), data["task_name"], evaluate_missing=evaluate_missing)
         agreement = correlate(ratings, truth, bootstrap=bootstrap, seed=seed)
         agreement["truth_source"] = source
-        out[str(path)] = agreement
-        if "error" in agreement:
-            continue
-        lo, hi = agreement["spearman_ci95"]
-        row = next(iter(data["scores"].values()))[0]
-        row.update(main_score=agreement["spearman_rho"], spearman=agreement["spearman_rho"],
-                   spearman_ci_low=lo, spearman_ci_high=hi, spearman_p=agreement["spearman_p"],
-                   kendall=agreement["kendall_tau"], spearman_top10=agreement["spearman_top10"],
-                   kendall_ap=agreement["kendall_ap"], n_models=agreement["n_models"], truth_source=source)
+        out[str(path)] = data["agreement"] = agreement
         path.write_text(json.dumps(data, indent=2))
     return out

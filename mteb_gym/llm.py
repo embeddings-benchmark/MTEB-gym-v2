@@ -8,6 +8,16 @@ import os
 import time
 
 
+def _retry(call, attempts: int):
+    for i in range(attempts):
+        try:
+            return call()
+        except Exception:  # noqa: BLE001 - transient API errors
+            if i == attempts - 1:
+                raise
+            time.sleep(2 ** i)
+
+
 def llm(model: str, base_url: str | None = None, api_key: str | None = None, **kwargs):
     """Client for `model` on an OpenAI-compatible endpoint (vLLM, OpenAI, Together, ...);
     "mock" is the deterministic test client. For the Anthropic API use AnthropicClient."""
@@ -50,17 +60,10 @@ class AnthropicClient:
     def chat(self, messages: list[dict], temperature: float = 0.0) -> str:
         system = "\n".join(m["content"] for m in messages if m["role"] == "system")
         convo = [m for m in messages if m["role"] != "system"]
-        for attempt in range(self.max_retries):
-            try:
-                resp = self.client.messages.create(model=self.model, max_tokens=self.max_tokens,
-                                                   temperature=temperature, system=system or None,
-                                                   messages=convo)
-                return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
-            except Exception:  # noqa: BLE001 - retry transient errors
-                if attempt == self.max_retries - 1:
-                    raise
-                time.sleep(2 ** attempt)
-        return ""
+        resp = _retry(lambda: self.client.messages.create(model=self.model, max_tokens=self.max_tokens,
+                                                          temperature=temperature, system=system or None,
+                                                          messages=convo), self.max_retries)
+        return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
 
 
 class OpenAICompatClient:
@@ -79,14 +82,7 @@ class OpenAICompatClient:
         self.extra_body = extra_body   # vLLM knobs, e.g. {"chat_template_kwargs": {"enable_thinking": False}}
 
     def chat(self, messages: list[dict], temperature: float = 0.0) -> str:
-        for attempt in range(self.max_retries):
-            try:
-                resp = self.client.chat.completions.create(model=self.model, messages=messages,
-                                                           temperature=temperature, max_tokens=self.max_tokens,
-                                                           extra_body=self.extra_body)
-                return resp.choices[0].message.content or ""
-            except Exception:  # noqa: BLE001
-                if attempt == self.max_retries - 1:
-                    raise
-                time.sleep(2 ** attempt)
-        return ""
+        resp = _retry(lambda: self.client.chat.completions.create(model=self.model, messages=messages,
+                                                                  temperature=temperature, max_tokens=self.max_tokens,
+                                                                  extra_body=self.extra_body), self.max_retries)
+        return resp.choices[0].message.content or ""

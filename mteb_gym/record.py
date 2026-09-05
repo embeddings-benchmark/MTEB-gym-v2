@@ -1,4 +1,4 @@
-"""The result record: one MTEB-like JSON per run with ratings, resolved config,
+"""The result record: one JSON per run with ratings, the resolved configuration,
 judge diagnostics and versions, so a reported ranking can be reproduced offline."""
 
 from __future__ import annotations
@@ -7,29 +7,16 @@ import hashlib
 import json
 import re
 import subprocess
-from dataclasses import asdict, is_dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
 
-def _jsonable(value: Any) -> Any:
-    if isinstance(value, Path):
-        return str(value)
-    if is_dataclass(value):
-        return {k: _jsonable(v) for k, v in asdict(value).items()}
-    if isinstance(value, dict):
-        return {str(k): _jsonable(v) for k, v in sorted(value.items())}
-    if isinstance(value, (list, tuple)):
-        return [_jsonable(v) for v in value]
-    return value
-
-
 def config_hash(config: dict[str, Any], length: int = 8) -> str:
     """Stable short hash over the experiment-defining config (never over itself)."""
     payload = {k: v for k, v in config.items() if k != "config_hash"}
-    return hashlib.sha256(json.dumps(_jsonable(payload), sort_keys=True, separators=(",", ":"),
-                                     ensure_ascii=False).encode()).hexdigest()[:length]
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                                     default=str).encode()).hexdigest()[:length]
 
 
 def _version(name: str) -> str | None:
@@ -58,7 +45,7 @@ def result_directory(root: Path, experiment: dict[str, Any]) -> Path:
 
 
 def verdict_diagnostics(verdicts: list[Any]) -> dict[str, Any]:
-    """Judge diagnostics recomputed from persisted verdicts, so cached and resumed runs report the truth."""
+    """Judge diagnostics from persisted verdicts, so cached and resumed runs report the truth."""
     n = len(verdicts)
     identical = sum(v.raw == ["identical"] for v in verdicts)
     ties = sum(float(v.score_a) == 0.5 for v in verdicts)
@@ -83,28 +70,18 @@ def verdict_diagnostics(verdicts: list[Any]) -> dict[str, Any]:
 
 def build(corpus, experiment: dict[str, Any], ratings: list[Any], verdicts: list[Any],
           evaluation_time: float, revisions: dict[str, str | None] | None = None) -> dict[str, Any]:
-    diag = verdict_diagnostics(verdicts)
     dataset = getattr(corpus.metadata, "dataset", None) or {}
-    row = {   # rank_agreement adds the agreement fields when official scores are available
-        "hf_subset": "default",
-        "languages": list(corpus.metadata.eval_langs),
-        "n_models": len(ratings),
-        **{k: diag[k] for k in ("commit_rate", "tie_rate", "a_first_rate", "parse_failure_rate",
-                                "identical_retrieval_rate", "n_comparisons")},
-    }
     return {
         "task_name": corpus.name,
-        "dataset_path": dataset.get("path"),
-        "dataset_revision": dataset.get("revision"),
         "corpus_fingerprint": corpus.fingerprint,
+        "dataset": {"path": dataset.get("path"), "revision": dataset.get("revision")},
         "mteb_version": _version("mteb"),
         "gym_version": _version("mteb-gym"),
         "gym_revision": git_revision(),
         "evaluation_time": float(evaluation_time),
-        "judge_calls": diag["judge_calls"],
         "config": experiment,
-        "scores": {"test": [row]},
+        "diagnostics": verdict_diagnostics(verdicts),
         "ratings": [{"model": m.name, "revision": (revisions or {}).get(m.name), "rating": m.rating,
                      "ci_low": m.ci_low, "ci_high": m.ci_high, "wins": m.wins, "losses": m.losses,
                      "ties": m.ties, "n": m.n} for m in ratings],
-    }
+    }   # rank_agreement adds "agreement" when official scores are available

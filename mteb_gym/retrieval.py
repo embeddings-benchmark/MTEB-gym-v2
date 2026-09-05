@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .corpus import Corpus
 
+
 @dataclass
 class Ranked:
     """One model's top-k for one query."""

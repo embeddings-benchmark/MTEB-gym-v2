@@ -169,11 +169,11 @@ def test_record():
     assert d == {"judge_calls": 4, "n_comparisons": 3, "commit_rate": 1 / 3, "tie_rate": 2 / 3,
                  "a_first_rate": 0.5, "parse_failure_rate": 0.25, "identical_retrieval_rate": 1 / 3}
     corpus = types.SimpleNamespace(name="demo", fingerprint="abc", metadata=types.SimpleNamespace(
-        eval_langs=["eng-Latn"], dataset={"path": "x", "revision": "y"}))
+        dataset={"path": "x", "revision": "y"}))
     exp = {"arm": "synthetic", "judge_model": "mock", "generator_model": "mock", "seed": 0}
     exp["config_hash"] = record.config_hash(exp)
     rec = record.build(corpus, exp, rate(verdicts, bootstrap=0), verdicts, evaluation_time=1.0)
-    assert rec["task_name"] == "demo" and rec["scores"]["test"][0]["tie_rate"] == 2 / 3 and len(rec["ratings"]) == 2
+    assert rec["task_name"] == "demo" and rec["diagnostics"]["tie_rate"] == 2 / 3 and len(rec["ratings"]) == 2
     assert record.result_directory(Path("r"), exp) == Path("r") / "mock__mock" / exp["config_hash"]
     print("  record ok")
 
@@ -188,12 +188,12 @@ def test_rank_agreement_api():
             path.write_text(json.dumps({
                 "task_name": "NFCorpus",
                 "ratings": [{"model": "model_a", "rating": 1100}, {"model": "model_b", "rating": 1000}, {"model": "model_c", "rating": 900}],
-                "scores": {"test": [{"n_models": 3}]}}))
+                "config": {}}))
             out = validate.rank_agreement(path, bootstrap=100, seed=0)
-            row = json.loads(path.read_text())["scores"]["test"][0]
-            assert row["spearman"] == 1.0 and row["kendall"] == 1.0 and row["spearman_p"] is not None
-            assert row["truth_source"] == {"model_a": "official", "model_b": "official", "model_c": "official"}
-            assert str(path) in out
+            agreement = json.loads(path.read_text())["agreement"]
+            assert agreement["spearman_rho"] == 1.0 and agreement["kendall_tau"] == 1.0
+            assert agreement["truth_source"] == {"model_a": "official", "model_b": "official", "model_c": "official"}
+            assert out[str(path)] == agreement
     finally:
         validate.fetch_truth = original
     print("  rank agreement API ok")

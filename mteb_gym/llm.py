@@ -9,12 +9,10 @@ import time
 
 
 def llm(model: str, base_url: str | None = None, api_key: str | None = None, **kwargs):
-    """Client for `model`: "mock" (tests, no network), "claude-*" via the Anthropic
-    API, anything else via an OpenAI-compatible endpoint (vLLM, OpenAI, Together)."""
+    """Client for `model` on an OpenAI-compatible endpoint (vLLM, OpenAI, Together, ...);
+    "mock" is the deterministic test client. For the Anthropic API use AnthropicClient."""
     if model == "mock":
         return MockClient(**kwargs)
-    if model.lower().startswith("claude"):
-        return AnthropicClient(model, api_key=api_key, **kwargs)
     return OpenAICompatClient(model, base_url=base_url, api_key=api_key, **kwargs)
 
 

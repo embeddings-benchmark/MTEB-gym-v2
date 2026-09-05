@@ -24,7 +24,7 @@ BASELINE_NDCG = {
 
 def fetch_truth(
     models: list[str],
-    task: str = "NFCorpus",
+    task: str,
     split: str = "test",
 ) -> dict[str, float]:
     """Load official MTEB nDCG@10 scores, evaluating cache misses via MTEB."""
@@ -210,7 +210,7 @@ def rank_agreement(
     for result_path in paths:
         data = json.loads(result_path.read_text())
 
-        # Skip legacy/cache JSON files; this API operates on standardized results.
+        # only gym result records; other JSON files in the tree are ignored
         if "task_name" not in data or "ratings" not in data or "scores" not in data:
             continue
 

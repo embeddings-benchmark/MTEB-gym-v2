@@ -3,7 +3,7 @@ Synthetic queries. The generator sees a few corpus documents and writes one
 realistic query answerable from the corpus but not a restatement of a shown
 document. Filtering is the biggest lever on agreement with ground truth; three
 gates, cheapest first: length/degeneracy heuristics, an LLM quality score
-(keep >= min_score), near-duplicate removal by cosine on a small encoder.
+(keep >= min_score), near-duplicate removal by token overlap.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ def extract_json(text: str) -> dict:
 class QueryGenerator:
     def __init__(self, client, *, intent: str | None = None, n_queries: int = 100, seed: int = 0,
                  filter: bool = True, workers: int = 16, docs_per_query: int = 3, overshoot: float = 1.6,
-                 min_chars: int = 15, max_chars: int = 240, min_score: int = 3, dedup: float = 0.92):
+                 min_chars: int = 15, max_chars: int = 240, min_score: int = 3, dedup: float = 0.8):
         self.client = client
         self.params = dict(intent=intent, n_queries=n_queries, seed=seed, filter=filter,
                            docs_per_query=docs_per_query, overshoot=overshoot, min_chars=min_chars,
@@ -148,17 +148,15 @@ class QueryGenerator:
                            "a misbehaving filter model can silently disable filtering", failures, len(queries))
 
     def _dedup(self, queries: list[Query]) -> list[Query]:
-        try:
-            from sentence_transformers import SentenceTransformer
-            vecs = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2").encode(
-                [q.text for q in queries], normalize_embeddings=True, show_progress_bar=False)
-        except Exception:  # noqa: BLE001 - no ML deps / offline: skip dedup
-            return queries
-        keep: list[int] = []
-        for i in range(len(queries)):
-            if all(float(vecs[i] @ vecs[j]) < self.params["dedup"] for j in keep):
-                keep.append(i)
-        return [queries[i] for i in keep]
+        """Drop a query whose token set overlaps an earlier one at Jaccard >= dedup."""
+        def tokens(q):
+            return set(re.findall(r"[a-z0-9]+", q.text.lower()))
+        kept: list[Query] = []
+        sets: list[set] = []
+        for q, t in zip(queries, map(tokens, queries)):
+            if all(len(t & s) / len(t | s) < self.params["dedup"] for s in sets if t | s):
+                kept.append(q); sets.append(t)
+        return kept
 
     def filter(self, queries: list[Query]) -> list[Query]:
         n = self.params["n_queries"]

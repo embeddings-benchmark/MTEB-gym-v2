@@ -78,7 +78,7 @@ def _load_task(name: str, split: str, cap: int | None, seed: int, inject_qrels_s
 def _load_local(root: Path, cap: int | None, seed: int) -> Corpus:
     import random
 
-    import mteb
+    from mteb.abstasks.task_metadata import TaskMetadata
 
     if root.is_file() and root.suffix == ".jsonl":
         rows = (json.loads(l) for l in root.read_text().splitlines() if l.strip())
@@ -91,10 +91,11 @@ def _load_local(root: Path, cap: int | None, seed: int) -> Corpus:
     if cap and len(docs) > cap:
         keep = random.Random(seed).sample(sorted(docs), cap)
         docs = {k: docs[k] for k in keep}
-    # No benchmark task behind a local corpus: a generic English retrieval task's
-    # metadata stands in, named after the corpus and without a task prompt.
-    base = mteb.get_tasks(tasks=["NFCorpus"])[0].metadata
-    metadata = base.model_copy(update={"name": root.stem, "prompt": None, "eval_splits": ["test"],
-                                       "eval_langs": ["eng-Latn"],
-                                       "dataset": {"path": str(root), "revision": "local"}})
-    return Corpus(name=root.stem, docs=docs, metadata=metadata)
+    corpus = Corpus(name=root.stem, docs=docs, metadata=None)
+    # no benchmark task behind a local corpus: minimal metadata, no task prompt
+    corpus.metadata = TaskMetadata(
+        name=root.stem, description=f"Local corpus {root}", type="Retrieval", category="t2t",
+        modalities=["text"], eval_splits=["test"], eval_langs=["eng-Latn"], main_score="ndcg_at_10",
+        dataset={"path": str(root), "revision": corpus.fingerprint},
+    )
+    return corpus

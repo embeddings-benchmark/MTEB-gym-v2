@@ -98,7 +98,7 @@ gym/
 ├── clients.py            LLM clients
 ├── query_generator.py    query generation + filtering
 ├── retrieval_harness.py  retrieval + caching
-├── baselines.py          retrieval baselines
+├── baselines.py          non-dense entrants via mteb's search protocol
 ├── judge.py              pairwise judging
 ├── scoring.py            Bradley–Terry scoring
 ├── results.py            standardized result artifacts

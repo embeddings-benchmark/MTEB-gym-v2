@@ -12,7 +12,7 @@ class GymConfig:
     task_name: str = "NFCorpus"
     corpus_split: str = "test"
     arm: str = "synthetic"
-    models: list[str] = field(default_factory=list)
+    models: list[str] = field(default_factory=list)   # MTEB model ids; "bm25" and "colbert" are aliases (baselines.ALIASES)
     judge: str | None = None
     generator: str | None = None
     judge_base_url: str | None = None

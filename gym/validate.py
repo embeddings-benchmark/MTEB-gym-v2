@@ -14,8 +14,8 @@ from pathlib import Path
 import numpy as np
 
 # nDCG@10 anchors for entrants with no entry in the official results repo:
-# bm25 self-run with mteb/baseline-bm25s (test split); colbert = published
-# ColBERTv2 BEIR number. Extend as tasks are added.
+# bm25 self-run with mteb/baseline-bm25s (test split), the implementation the
+# gym itself runs; colbert = published ColBERTv2 BEIR number.
 BASELINE_NDCG = {
     "bm25": {"NFCorpus": 32.1, "SciFact": 68.63, "FiQA2018": 25.14, "ArguAna": 49.29},
     "colbert": {"NFCorpus": 33.8},

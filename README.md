@@ -20,32 +20,31 @@ pip install -e ".[full]"
 
 ## Quickstart
 
-Embedding models are loaded through MTEB so registered prompts, revisions, and encoding behavior are handled automatically.
-
 ```python
-import mteb
+from gym import Gym, GymConfig, rank_agreement
 
-from gym import Gym, GymConfig
-
-models = [
-    mteb.get_model("Alibaba-NLP/gte-Qwen2-7B-instruct"),
-    mteb.get_model("sentence-transformers/all-MiniLM-L6-v2"),
-]
-
-config = GymConfig(
-    models=models,
-    judge=judge_client,
-    generator=generator_client,
-    output_dir="results/",
+cfg = GymConfig(
+    task_name="NFCorpus",          # any MTEB retrieval task, or corpus_path="docs/" for your own corpus
+    models=[                       # MTEB model ids; "bm25" is the lexical baseline
+        "bm25",
+        "sentence-transformers/all-MiniLM-L6-v2",
+        "intfloat/e5-base-v2",
+    ],
+    judge="Qwen/Qwen3-8B",          # served at judge_base_url; "claude-*" ids use the Anthropic API
+    judge_base_url="http://localhost:8000/v1",
+    generator="claude-sonnet-4-5",  # a different model family from the judge
+    output_dir="results/nfcorpus",
 )
 
-gym = Gym(config)
-result = gym.run()
+gym = Gym(cfg)
+gym.run()
+print(gym.leaderboard_str)
+
+# optional, only for tasks with official labels: how well the gym ranking agrees with MTEB
+print(rank_agreement(cfg.output_dir))
 ```
 
-Model names do not need to be supplied separately for registered MTEB models; identifying metadata comes from the model itself.
-
-LLM backends use a common client interface, with OpenAI-compatible endpoints preferred where available. For evaluation runs, the generator and judge should come from different model families.
+Embedding models are loaded through MTEB, so prompts, revisions, and encoding behavior are the ones an official MTEB run uses. Any OpenAI-compatible endpoint (vLLM, OpenAI, Together) works for the judge and generator; use `judge_client=` / `gen_client=` on `Gym(...)` to pass a client object instead.
 
 ## How it works
 

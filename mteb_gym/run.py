@@ -1,0 +1,189 @@
+"""
+One call runs the pipeline and caches every stage on disk:
+
+    corpus -> synthetic queries -> mteb retrieval per model -> pairwise judging -> Bradley-Terry -> record
+
+    out/queries/      one file per (corpus, generator, parameters)
+    out/predictions/  <model>/<query-set>/  mteb's prediction file
+    out/verdicts/     one file per model pair, keyed on judge, prompt and both retrieved lists
+    out/results/      <judge>__<generator>/<config-hash>/<corpus>.json
+"""
+
+from __future__ import annotations
+
+import hashlib
+import itertools
+import json
+import logging
+import threading
+import time
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+from . import corpus as corpus_mod
+from . import record, retrieval, validate
+from . import task as task_mod
+from .judge import Judge, Verdict, task_prompt
+from .queries import Query, QueryGenerator
+from .rank import ModelRating, format_leaderboard, rate
+from .retrieval import Ranked, slug
+
+logger = logging.getLogger(__name__)
+
+_FAMILIES = {"claude": ("claude", "haiku", "sonnet", "opus"), "gpt": ("gpt-", "o1", "o3", "o4"),
+             "qwen": ("qwen",), "gemini": ("gemini", "gemma"), "llama": ("llama",),
+             "mistral": ("mistral", "mixtral"), "deepseek": ("deepseek",)}
+
+
+def _model_id(client) -> str:
+    return str(getattr(client, "model", type(client).__name__))
+
+
+def _family(client) -> str | None:
+    mid = _model_id(client).lower()
+    return next((f for f, marks in _FAMILIES.items() if any(m in mid for m in marks)), None)
+
+
+def _sha(*parts) -> str:
+    return hashlib.sha256("|".join(map(str, parts)).encode()).hexdigest()[:12]
+
+
+@dataclass
+class Result:
+    ratings: list[ModelRating]
+    leaderboard: str
+    record_path: Path
+    judge: Judge
+
+    def agreement(self, **kwargs) -> dict:
+        """Rank agreement with official MTEB scores (only meaningful for an MTEB task)."""
+        return validate.rank_agreement(self.record_path, **kwargs)
+
+
+def resolve_instruction(judge_instruction: str | None, corpus) -> tuple[str | None, str | None]:
+    """"auto": the task's own mteb prompt (generic when it has none); None: generic; text: verbatim."""
+    if judge_instruction == "auto":
+        p = task_prompt(getattr(corpus.metadata, "prompt", None))
+        return (p, "mteb:task_prompt") if p else (None, None)
+    return (judge_instruction, "config:judge_instruction") if judge_instruction else (None, None)
+
+
+def _cached_queries(path: Path, gen: QueryGenerator, docs: dict[str, str]) -> tuple[list[Query], int | None]:
+    if path.exists():
+        data = json.loads(path.read_text())
+        if data["queries"]:
+            return [Query(**q) for q in data["queries"]], data.get("n_generated")
+        logger.warning("empty query cache at %s (crash artifact); regenerating", path)
+    queries = gen.run(docs)
+    if not queries:
+        raise RuntimeError("query generation returned 0 queries: the generator endpoint is likely dead "
+                           "or the filter rejected everything")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"n_generated": gen.n_generated, "queries": [asdict(q) for q in queries]}, indent=2))
+    return queries, gen.n_generated
+
+
+def _lists_fingerprint(ranked: list[Ranked]) -> str:
+    return _sha(*(f"{r.qid}:{','.join(r.doc_ids)}" for r in ranked))
+
+
+def judge_pair_cached(vdir: Path, judge: Judge, a: str, b: str, ra: list[Ranked], rb: list[Ranked],
+                      top_k: int) -> list[Verdict]:
+    """Verdicts for one pair, cached on judge model, resolved prompt, top_k and both
+    retrieved lists; streamed to JSONL as they complete so a crash resumes."""
+    key = _sha(_model_id(judge.client), judge.system, top_k, judge.flip, _lists_fingerprint(ra), _lists_fingerprint(rb))
+    path = vdir / f"{slug(a)}__{slug(b)}-{key}.json"
+    if path.exists():
+        return [Verdict(**v) for v in json.loads(path.read_text())]
+    vdir.mkdir(parents=True, exist_ok=True)
+    jsonl = path.with_suffix(".jsonl")
+    done: dict[str, Verdict] = {}
+    if jsonl.exists():
+        for line in jsonl.read_text().splitlines():
+            if line.strip():
+                v = Verdict(**json.loads(line))
+                done[v.qid] = v
+        if done:
+            logger.info("%s vs %s: resuming, %d verdicts on disk", a, b, len(done))
+    todo = [r for r in ra if r.qid not in done]
+    if todo:
+        lock = threading.Lock()
+
+        def persist(v: Verdict) -> None:
+            with lock, jsonl.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(asdict(v)) + "\n")
+
+        done.update({v.qid: v for v in judge.judge_all(todo, rb, a, b, on_verdict=persist)})
+    order = {r.qid: i for i, r in enumerate(ra)}
+    verdicts = sorted(done.values(), key=lambda v: order.get(v.qid, 1 << 30))
+    path.write_text(json.dumps([asdict(v) for v in verdicts], indent=2))
+    return verdicts
+
+
+def run(corpus: str | Path, models: list[str], judge, generator=None, *, n_queries: int = 100,
+        top_k: int = 10, seed: int = 0, out: str | Path = "results/run", arm: str = "synthetic",
+        judge_instruction: str | None = "auto", filter: bool = True, flip_positions: bool = True,
+        split: str = "test", corpus_cap: int | None = None, inject_qrels_split: str | None = None,
+        encode_batch_size: int = 32, judge_workers: int = 8, gen_workers: int = 16,
+        bootstrap: int = 1000) -> Result:
+    """Rank `models` on `corpus` (an mteb task name or a local path) with an LLM judge.
+
+    `judge` and `generator` are clients from `mteb_gym.llm`; the generator defaults
+    to the judge. `arm="human"` uses the task's own queries and qrels instead of
+    synthetic queries. `judge_instruction`: "auto" = the task's own criterion, None
+    = generic relevance, or text."""
+    started = time.time()
+    out, models = Path(out), list(models)
+    if not models:
+        raise ValueError("no models given")
+    gen_client = generator if generator is not None else judge
+    if generator is None:
+        logger.warning("no generator given: the judge also writes the queries (self-preference risk)")
+    elif _family(gen_client) and _family(gen_client) == _family(judge):
+        logger.warning("generator and judge are both '%s' family; use different families for clean validation",
+                       _family(judge))
+
+    corp = corpus_mod.load(corpus, split=split, cap=corpus_cap, seed=seed, inject_qrels_split=inject_qrels_split)
+
+    gen = QueryGenerator(gen_client, n_queries=n_queries, seed=seed, filter=filter, workers=gen_workers)
+    if arm == "human":
+        if not corp.queries:
+            raise ValueError(f"{corp.name} has no queries for a human-query arm")
+        queries, n_generated, texts = None, None, corp.queries
+    else:
+        qpath = out / "queries" / f"{corp.fingerprint}-{slug(_model_id(gen_client))}-{_sha(sorted(gen.params.items()))}.json"
+        queries, n_generated = _cached_queries(qpath, gen, corp.docs)
+        texts = {q.qid: q.text for q in queries}
+    query_set = _sha(*(f"{k}:{v}" for k, v in texts.items()))
+
+    gym_task = task_mod.build(corp, queries)
+    ranked: dict[str, list[Ranked]] = {}
+    for m in models:
+        path = retrieval.predict(m, gym_task, out / "predictions" / slug(m) / query_set, batch_size=encode_batch_size)
+        ranked[m] = retrieval.top_k(path, corp, texts, top_k)
+
+    instruction, source = resolve_instruction(judge_instruction, corp)
+    jd = Judge(judge, instruction=instruction, flip_positions=flip_positions, workers=judge_workers)
+    verdicts: list[Verdict] = []
+    for i, (a, b) in enumerate(itertools.combinations(models, 2), 1):
+        logger.info("pair %d/%d: %s vs %s", i, len(models) * (len(models) - 1) // 2, a, b)
+        verdicts.extend(judge_pair_cached(out / "verdicts", jd, a, b, ranked[a], ranked[b], top_k))
+
+    ratings = rate(verdicts, bootstrap=bootstrap, seed=seed)
+
+    experiment = {
+        "arm": arm, "judge_model": _model_id(judge),
+        "generator_model": _model_id(gen_client) if arm == "synthetic" else None,
+        "instruction": instruction, "instruction_source": source, "judge_system": jd.system,
+        "n_queries_generated": n_generated, "n_queries": len(texts), "top_k": top_k, "seed": seed,
+        "flip_positions": flip_positions, "corpus_split": split, "corpus_cap": corpus_cap,
+        "inject_qrels_split": inject_qrels_split, "bootstrap": bootstrap,
+        **{f"gen_{k}": v for k, v in gen.params.items()}, "models": models,
+    }
+    experiment["config_hash"] = record.config_hash(experiment)
+    rec = record.build(corp, experiment, ratings, verdicts, evaluation_time=time.time() - started)
+    rdir = record.result_directory(out / "results", experiment)
+    rdir.mkdir(parents=True, exist_ok=True)
+    rpath = rdir / f"{corp.name}.json"
+    rpath.write_text(json.dumps(rec, indent=2))
+    return Result(ratings, format_leaderboard(ratings), rpath, jd)

@@ -59,6 +59,7 @@ def _load_task(name: str, cap: int | None, seed: int, keep_judged: bool) -> Corp
 
     task = mteb.get_tasks(tasks=[name])[0]
     task.load_data()
+    task.convert_v1_dataset_format_to_v2(num_proc=None)  # as mteb.evaluate does: some tasks still load the v1 layout
     subsets = task.dataset
     subset = "default" if subsets.get("default") else next(iter(subsets))  # an empty "default" falls through
     data = subsets[subset].get("test") or subsets[subset][next(iter(subsets[subset]))]

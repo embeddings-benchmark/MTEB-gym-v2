@@ -15,24 +15,41 @@ MTEB Gym originated from the [MTEB Gym discussion](https://github.com/embeddings
 ## Installation
 
 ```bash
-pip install -e ".[full]"
+pip install "mteb-gym[retrieval] @ git+https://github.com/embeddings-benchmark/MTEB-gym-v2"
 ```
 
+`retrieval` brings mteb, sentence-transformers, torch and BM25. Add `openai` and/or `claude` for real judges (`[retrieval,openai]`).
+
 ## Quickstart
+
+No API key, no GPU, about a minute on CPU. The mock judge answers deterministically: this checks the plumbing, it does not rank models.
 
 ```python
 import mteb_gym as gym
 
 result = gym.run(
-    corpus="NFCorpus",  # any MTEB retrieval task, or a directory / .jsonl of your own documents
-    models=["mteb/baseline-bm25s", "BAAI/bge-base-en-v1.5", "intfloat/e5-base-v2"],  # MTEB model ids
-    judge=gym.llm("Qwen/Qwen3-8B", base_url="http://localhost:8000/v1"),  # any OpenAI-compatible endpoint
-    generator=gym.AnthropicClient("claude-sonnet-4-5"),  # a different model family from the judge
+    corpus="NanoNFCorpusRetrieval",
+    models=["mteb/baseline-bm25s", "sentence-transformers/all-MiniLM-L6-v2"],
+    judge=gym.llm("mock"),
+    n_queries=20,
+    out="results/demo",
+)
+print(result.leaderboard)
+```
+
+A real run: any MTEB retrieval task or a directory / .jsonl of your own documents, MTEB model ids, an LLM judge on any OpenAI-compatible endpoint, and a generator from a different model family.
+
+```python
+result = gym.run(
+    corpus="NFCorpus",
+    models=["mteb/baseline-bm25s", "BAAI/bge-base-en-v1.5", "intfloat/e5-base-v2"],
+    judge=gym.llm("Qwen/Qwen3-8B", base_url="http://localhost:8000/v1"),
+    generator=gym.AnthropicClient("claude-sonnet-4-5"),
     n_queries=100,
     out="results/nfcorpus",
 )
 print(result.leaderboard)
-print(result.agreement())  # only for an MTEB task: how well the ranking agrees with official scores
+print(result.agreement())  # MTEB tasks only: agreement of the ranking with official scores
 ```
 
 Or from the shell:

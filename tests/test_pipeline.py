@@ -264,3 +264,24 @@ def test_end_to_end_local_corpus():
         calls["n"] = 0
         again = run(docs, **kw)  # everything cached: no LLM calls, same ratings
         assert calls["n"] == 0 and [r.rating for r in again.ratings] == [r.rating for r in res.ratings]
+
+
+def test_end_to_end_mteb_task():
+    pytest.importorskip("mteb")
+    pytest.importorskip("bm25s")
+    pytest.importorskip("sentence_transformers")
+    from mteb_gym import llm, run
+
+    with tempfile.TemporaryDirectory() as tmp:
+        res = run(
+            "NanoNFCorpusRetrieval",
+            ["mteb/baseline-bm25s", "sentence-transformers/all-MiniLM-L6-v2"],
+            judge=llm("mock"),
+            n_queries=8,
+            out=Path(tmp),
+            workers=1,
+        )
+        cfg = res.record["config"]
+        assert len(res.ratings) == 2 and cfg["n_queries"] >= 5  # the mock's queries survive filtering
+        assert cfg["intent_source"] == "mteb:task_prompt" and "retrieve" in cfg["intent"]  # the task's own criterion
+        assert res.record["diagnostics"]["n_comparisons"] == cfg["n_queries"]

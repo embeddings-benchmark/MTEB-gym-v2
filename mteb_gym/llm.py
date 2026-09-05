@@ -45,9 +45,26 @@ class MockClient:
             return json.dumps({"score": (h % 5) + 1, "reason": "mock"})
         if "system a" in prompt.lower():
             return json.dumps({"winner": ["A", "B", "tie"][h % 3], "confidence": "low", "reasoning": "mock"})
-        return json.dumps(
-            {"query": f"what is the relationship between factor {h % 1000} and clinical outcomes in affected patients"}
-        )
+        topics = [
+            "statins",
+            "vitamin D",
+            "dietary fiber",
+            "sleep duration",
+            "sodium intake",
+            "aerobic exercise",
+            "gut bacteria",
+            "blood pressure",
+            "telomere length",
+            "coffee",
+        ]
+        forms = [
+            "what is the relationship between {a} and {b}",
+            "does {a} change {b} in randomized trials",
+            "how does {a} affect {b} in older adults",
+            "evidence that {a} lowers the risk linked to {b}",
+        ]
+        a, b = topics[h % len(topics)], topics[(h // 7 + 1) % len(topics)]
+        return json.dumps({"query": forms[h % len(forms)].format(a=a, b=b)})
 
 
 class AnthropicClient:

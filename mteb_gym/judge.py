@@ -151,12 +151,3 @@ class Judge:
             return collect(map(one, pairs))
         with ThreadPoolExecutor(max_workers=self.workers) as pool:   # map keeps input order
             return collect(pool.map(one, pairs))
-
-
-    def a_first_rate(self) -> float | None:
-        """Fraction of decisive verdicts that went to the first-shown system."""
-        return self._first_picks / self._decisive if self._decisive else None
-
-    @property
-    def parse_failure_rate(self) -> float | None:
-        return self._parse_failures / self._asks if self._asks else None

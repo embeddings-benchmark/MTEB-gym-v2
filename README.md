@@ -24,15 +24,15 @@ pip install -e ".[full]"
 import mteb_gym as gym
 
 result = gym.run(
-    corpus="NFCorpus",                     # any MTEB retrieval task, or a directory / .jsonl of your own documents
-    models=["mteb/baseline-bm25s", "BAAI/bge-base-en-v1.5", "intfloat/e5-base-v2"],   # MTEB model ids
-    judge=gym.llm("Qwen/Qwen3-8B", base_url="http://localhost:8000/v1"),   # any OpenAI-compatible endpoint
-    generator=gym.AnthropicClient("claude-sonnet-4-5"),                    # a different model family from the judge
+    corpus="NFCorpus",  # any MTEB retrieval task, or a directory / .jsonl of your own documents
+    models=["mteb/baseline-bm25s", "BAAI/bge-base-en-v1.5", "intfloat/e5-base-v2"],  # MTEB model ids
+    judge=gym.llm("Qwen/Qwen3-8B", base_url="http://localhost:8000/v1"),  # any OpenAI-compatible endpoint
+    generator=gym.AnthropicClient("claude-sonnet-4-5"),  # a different model family from the judge
     n_queries=100,
     out="results/nfcorpus",
 )
 print(result.leaderboard)
-print(result.agreement())   # only for an MTEB task: how well the ranking agrees with official scores
+print(result.agreement())  # only for an MTEB task: how well the ranking agrees with official scores
 ```
 
 Or from the shell:
@@ -72,8 +72,8 @@ The official labels are never exposed to the Gym pipeline itself.
 ```python
 from mteb_gym import rank_agreement
 
-agreement = rank_agreement("results/")                          # official scores from the MTEB results repository
-agreement = rank_agreement("results/", evaluate_missing=True)   # also run mteb on the real task for models without one
+agreement = rank_agreement("results/")  # official scores from the MTEB results repository
+agreement = rank_agreement("results/", evaluate_missing=True)  # also run mteb on the real task for models without one
 ```
 
 Official scores come from the MTEB results repository through mteb's result cache; models without one are skipped unless `evaluate_missing=True`, in which case mteb evaluates them on the real task and stores the result in that cache. The output records per model whether its anchor was official or self-run, and reports Spearman, Kendall, top-10 Spearman and AP correlation with bootstrap intervals.

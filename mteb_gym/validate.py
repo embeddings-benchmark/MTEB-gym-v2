@@ -78,7 +78,7 @@ def correlate(gym_ratings: dict[str, float], ground_truth: dict[str, float],
         r, _ = spearmanr(g[idx], t[idx])
         if not np.isnan(r):
             boots.append(r)
-    ci = (float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5))) if boots else (None, None)
+    ci = [float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5))] if boots else [None, None]
 
     top10 = None
     if len(shared) >= 12:   # among the officially top-10 models only: where a selection decision is made

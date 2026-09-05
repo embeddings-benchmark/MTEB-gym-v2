@@ -5,6 +5,5 @@ venv/
 *.egg-info/
 .DS_Store
 results/
-*.npy
 *.jsonl
 .ipynb_checkpoints/

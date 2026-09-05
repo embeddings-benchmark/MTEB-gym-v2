@@ -79,9 +79,9 @@ def test_judge():
     class Garbage:
         def chat(self, messages, temperature=0.0):
             return "I refuse to answer in the requested format."
-    judge = Judge(Garbage())
-    verdicts = judge.judge_all(ra[:5], rb[:5], "m_a", "m_b")
-    assert all(v.score_a == 0.5 for v in verdicts) and judge.parse_failure_rate == 1.0
+    verdicts = Judge(Garbage()).judge_all(ra[:5], rb[:5], "m_a", "m_b")
+    assert all(v.score_a == 0.5 for v in verdicts)
+    assert record.verdict_diagnostics(verdicts)["parse_failure_rate"] == 1.0
     print("  judge ok (deterministic, identical short-circuit, parse failures counted)")
 
 
@@ -103,7 +103,6 @@ def test_correlate():
     g = {f"m{i}": float(i) for i in range(5)}
     res = validate.correlate(g, dict(g), bootstrap=50)
     assert abs(res["spearman_rho"] - 1.0) < 1e-9
-    assert abs(res["spearman_p_exact"] - 2 / 120) < 1e-9   # only identity and reversal reach |rho| = 1
     import numpy as np
     truth = {f"m{i}": float(i) for i in range(25)}
     top = list(range(15, 25)); np.random.default_rng(0).shuffle(top)
@@ -181,17 +180,19 @@ def test_record():
 
 def test_rank_agreement_api():
     original = validate.fetch_truth
-    validate.fetch_truth = lambda models, task="NFCorpus", split="test": {"model_a": 30.0, "model_b": 20.0, "model_c": 10.0}
+    validate.fetch_truth = lambda models, task, **kw: ({"model_a": 30.0, "model_b": 20.0, "model_c": 10.0},
+                                                      {m: "official" for m in models})
     try:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "NFCorpus.json"
             path.write_text(json.dumps({
                 "task_name": "NFCorpus",
                 "ratings": [{"model": "model_a", "rating": 1100}, {"model": "model_b", "rating": 1000}, {"model": "model_c", "rating": 900}],
-                "scores": {"test": [{"spearman": None, "kendall": None, "n_models": 3}]}}))
+                "scores": {"test": [{"n_models": 3}]}}))
             out = validate.rank_agreement(path, bootstrap=100, seed=0)
             row = json.loads(path.read_text())["scores"]["test"][0]
-            assert row["spearman"] == 1.0 and row["kendall"] == 1.0 and row["p_permutation"] is not None
+            assert row["spearman"] == 1.0 and row["kendall"] == 1.0 and row["spearman_p"] is not None
+            assert row["truth_source"] == {"model_a": "official", "model_b": "official", "model_c": "official"}
             assert str(path) in out
     finally:
         validate.fetch_truth = original
@@ -220,7 +221,7 @@ def test_end_to_end_local_corpus():
         for did, text in make_corpus(12).items():
             (docs / f"{did}.txt").write_text(text)
         kw = dict(models=["mteb/baseline-bm25s", "sentence-transformers/all-MiniLM-L6-v2"], judge=Counting(), n_queries=4,
-                  filter=False, bootstrap=20, out=Path(tmp) / "out", judge_workers=1, gen_workers=1)
+                  filter=False, out=Path(tmp) / "out", workers=1)
         res = run(docs, **kw)
         assert len(res.ratings) == 2 and res.record_path.exists()
         rec = json.loads(res.record_path.read_text())

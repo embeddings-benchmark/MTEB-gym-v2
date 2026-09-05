@@ -15,6 +15,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 BASE, SCALE = 1000.0, 400.0
+BOOTSTRAP = 1000
 
 
 @dataclass
@@ -69,7 +70,7 @@ def _ratings(verdicts, names) -> np.ndarray:
     return r - r.mean() + BASE
 
 
-def rate(verdicts, bootstrap: int = 1000, seed: int = 0) -> list[ModelRating]:
+def rate(verdicts, bootstrap: int = BOOTSTRAP, seed: int = 0) -> list[ModelRating]:
     if not verdicts:
         return []
     names = sorted({m for v in verdicts for m in (v.model_a, v.model_b)})

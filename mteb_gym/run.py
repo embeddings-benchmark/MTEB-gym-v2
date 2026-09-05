@@ -43,7 +43,7 @@ class Result:
     ratings: list[ModelRating]
     leaderboard: str
     record_path: Path
-    judge: Judge
+    record: dict
 
     def agreement(self, **kwargs) -> dict:
         """Rank agreement with official MTEB scores (only meaningful for an MTEB task)."""
@@ -82,7 +82,7 @@ def judge_pair_cached(vdir: Path, judge: Judge, a: str, b: str, ra: list[Ranked]
                       top_k: int) -> list[Verdict]:
     """Verdicts for one pair, cached on judge model, resolved prompt, top_k and both
     retrieved lists; streamed to JSONL as they complete so a crash resumes."""
-    key = _sha(_model_id(judge.client), judge.system, top_k, judge.flip, _lists_fingerprint(ra), _lists_fingerprint(rb))
+    key = _sha(_model_id(judge.client), judge.system, top_k, _lists_fingerprint(ra), _lists_fingerprint(rb))
     path = vdir / f"{slug(a)}__{slug(b)}-{key}.json"
     if path.exists():
         return [Verdict(**v) for v in json.loads(path.read_text())]
@@ -113,16 +113,15 @@ def judge_pair_cached(vdir: Path, judge: Judge, a: str, b: str, ra: list[Ranked]
 
 def run(corpus: str | Path, models: list[str], judge, generator=None, *, n_queries: int = 100,
         top_k: int = 10, seed: int = 0, out: str | Path = "results/run", arm: str = "synthetic",
-        intent: str | None = "auto", filter: bool = True, flip_positions: bool = True,
-        split: str = "test", corpus_cap: int | None = None, inject_qrels_split: str | None = None,
-        encode_batch_size: int = 32, judge_workers: int = 8, gen_workers: int = 16,
-        bootstrap: int = 1000) -> Result:
+        intent: str | None = "auto", filter: bool = True, corpus_cap: int | None = None,
+        batch_size: int = 32, workers: int = 8) -> Result:
     """Rank `models` on `corpus` (an mteb task name or a local path) with an LLM judge.
 
-    `judge` and `generator` are clients from `mteb_gym.llm`; the generator defaults
+    `judge` and `generator` are LLM clients (see mteb_gym.llm); the generator defaults
     to the judge. `arm="human"` uses the task's own queries and qrels instead of
     synthetic queries. `intent` conditions both generation and judging: "auto" = the
-    task's own criterion, None = generic relevance, or text."""
+    task's own criterion, None = generic relevance, or text. `corpus_cap` subsamples
+    giant corpora; `batch_size` is the encode batch; `workers` the concurrent LLM calls."""
     started = time.time()
     out, models = Path(out), list(models)
     if not models:
@@ -131,11 +130,10 @@ def run(corpus: str | Path, models: list[str], judge, generator=None, *, n_queri
     if generator is None:
         logger.warning("no generator given: the judge also writes the queries (self-preference risk)")
 
-    corp = corpus_mod.load(corpus, split=split, cap=corpus_cap, seed=seed, inject_qrels_split=inject_qrels_split)
+    corp = corpus_mod.load(corpus, cap=corpus_cap, seed=seed, keep_judged=(arm == "human"))
 
     criterion, criterion_source = resolve_intent(intent, corp)
-    gen = QueryGenerator(gen_client, intent=criterion, n_queries=n_queries, seed=seed, filter=filter,
-                         workers=gen_workers)
+    gen = QueryGenerator(gen_client, intent=criterion, n_queries=n_queries, seed=seed, filter=filter, workers=workers)
     if arm == "human":
         if not corp.queries:
             raise ValueError(f"{corp.name} has no queries for a human-query arm")
@@ -150,26 +148,24 @@ def run(corpus: str | Path, models: list[str], judge, generator=None, *, n_queri
     ranked: dict[str, list[Ranked]] = {}
     revisions: dict[str, str | None] = {}
     for m in models:
-        path = retrieval.predict(m, gym_task, out / "predictions" / slug(m) / query_set, batch_size=encode_batch_size)
+        path = retrieval.predict(m, gym_task, out / "predictions" / slug(m) / query_set, batch_size=batch_size)
         ranked[m] = retrieval.top_k(path, corp, texts, top_k)
         revisions[m] = retrieval.revision(path)
 
-    jd = Judge(judge, instruction=criterion, flip_positions=flip_positions, workers=judge_workers)
+    jd = Judge(judge, instruction=criterion, workers=workers)
     verdicts: list[Verdict] = []
     for i, (a, b) in enumerate(itertools.combinations(models, 2), 1):
         logger.info("pair %d/%d: %s vs %s", i, len(models) * (len(models) - 1) // 2, a, b)
         verdicts.extend(judge_pair_cached(out / "verdicts", jd, a, b, ranked[a], ranked[b], top_k))
 
-    ratings = rate(verdicts, bootstrap=bootstrap, seed=seed)
+    ratings = rate(verdicts, seed=seed)
 
     experiment = {
         "arm": arm, "judge_model": _model_id(judge),
         "generator_model": _model_id(gen_client) if arm == "synthetic" else None,
         "intent": criterion, "intent_source": criterion_source, "judge_system": jd.system,
         "n_queries_generated": n_generated, "n_queries": len(texts), "top_k": top_k, "seed": seed,
-        "flip_positions": flip_positions, "corpus_split": split, "corpus_cap": corpus_cap,
-        "inject_qrels_split": inject_qrels_split, "bootstrap": bootstrap,
-        **{f"gen_{k}": v for k, v in gen.params.items()}, "models": models,
+        "corpus_cap": corpus_cap, **{f"gen_{k}": v for k, v in gen.params.items()}, "models": models,
     }
     experiment["config_hash"] = record.config_hash(experiment)
     rec = record.build(corp, experiment, ratings, verdicts, evaluation_time=time.time() - started,
@@ -178,4 +174,4 @@ def run(corpus: str | Path, models: list[str], judge, generator=None, *, n_queri
     rdir.mkdir(parents=True, exist_ok=True)
     rpath = rdir / f"{corp.name}.json"
     rpath.write_text(json.dumps(rec, indent=2))
-    return Result(ratings, format_leaderboard(ratings), rpath, jd)
+    return Result(ratings, format_leaderboard(ratings), rpath, rec)

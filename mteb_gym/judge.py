@@ -2,8 +2,8 @@
 Pairwise judge. Each pair is judged in both presentation orders and scored
 fractionally: score_A = mean over the two orders of {win: 1, tie: 0.5, loss: 0}.
 A split across orders is 0.5, a soft tie that still carries magnitude into
-Bradley-Terry. Position bias is surfaced as `a_first_rate` (0.5 is unbiased);
-flipping cancels it in the score.
+Bradley-Terry. Flipping cancels position bias in the score; the record reports
+it as a_first_rate (0.5 is unbiased).
 """
 
 from __future__ import annotations
@@ -85,40 +85,28 @@ class Judge:
     MAX_EARLY_PARSE_FAIL = 0.5   # above this fraction unparseable: dead judge or bad API key
     MAX_EARLY_IDENTICAL = 0.95   # above this fraction identical lists: empty or mis-loaded corpus
 
-    def __init__(self, client, instruction: str | None = None, flip_positions: bool = True, workers: int = 1):
+    def __init__(self, client, instruction: str | None = None, workers: int = 1):
         self.client = client
         self.system = judge_system(instruction)
-        self.flip = flip_positions
         self.workers = max(1, workers)
-        self._lock = threading.Lock()
-        self._first_picks = self._decisive = self._asks = self._parse_failures = 0
 
     def _ask(self, query: str, first: Ranked, second: Ranked) -> tuple[str, str, bool]:
         msg = [{"role": "system", "content": self.system},
                {"role": "user", "content": f"Query: {query}\n\nSystem A results:\n{_format(first)}\n\n"
                                            f"System B results:\n{_format(second)}\n\nReply as JSON."}]
-        winner, reasoning, ok = _parse(self.client.chat(msg, temperature=0.0))
-        with self._lock:
-            self._asks += 1
-            self._parse_failures += not ok
-            if winner != "tie":
-                self._decisive += 1
-                self._first_picks += winner == "A"   # picked the first-shown system
-        return winner, reasoning, ok
+        return _parse(self.client.chat(msg, temperature=0.0))
 
     def judge_pair(self, ra: Ranked, rb: Ranked, model_a: str, model_b: str) -> Verdict:
-        """Both orders (if flip), averaged to a fractional score for A. Identical
+        """Both presentation orders, averaged to a fractional score for A. Identical
         result sets are scored 0.5 without spending judge calls."""
         if ra.doc_ids == rb.doc_ids and ra.doc_texts == rb.doc_texts:
             return Verdict(ra.qid, ra.query, model_a, model_b, 0.5, raw=["identical"],
                            reasoning="identical result sets; tied without judging")
         w1, why1, ok1 = self._ask(ra.query, ra, rb)
-        raws, scores, whys, oks = [w1], [_OUTCOME[w1]], [why1], [ok1]
-        if self.flip:
-            w2, why2, ok2 = self._ask(ra.query, rb, ra)
-            raws.append(w2); scores.append(1.0 - _OUTCOME[w2]); whys.append(why2); oks.append(ok2)
-        return Verdict(ra.qid, ra.query, model_a, model_b, sum(scores) / len(scores), raw=raws,
-                       reasoning=" | ".join(w for w in whys if w), parsed_ok=oks)
+        w2, why2, ok2 = self._ask(ra.query, rb, ra)
+        score = (_OUTCOME[w1] + 1.0 - _OUTCOME[w2]) / 2
+        return Verdict(ra.qid, ra.query, model_a, model_b, score, raw=[w1, w2],
+                       reasoning=" | ".join(w for w in (why1, why2) if w), parsed_ok=[ok1, ok2])
 
     def _early_failure_guard(self, n_done: int, n_failed: int, n_identical: int) -> None:
         """Abort loudly instead of scoring a whole run as ties."""
@@ -164,7 +152,7 @@ class Judge:
         with ThreadPoolExecutor(max_workers=self.workers) as pool:   # map keeps input order
             return collect(pool.map(one, pairs))
 
-    @property
+
     def a_first_rate(self) -> float | None:
         """Fraction of decisive verdicts that went to the first-shown system."""
         return self._first_picks / self._decisive if self._decisive else None

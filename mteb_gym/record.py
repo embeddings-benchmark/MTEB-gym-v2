@@ -85,11 +85,9 @@ def build(corpus, experiment: dict[str, Any], ratings: list[Any], verdicts: list
           evaluation_time: float, revisions: dict[str, str | None] | None = None) -> dict[str, Any]:
     diag = verdict_diagnostics(verdicts)
     dataset = getattr(corpus.metadata, "dataset", None) or {}
-    row = {
+    row = {   # rank_agreement adds the agreement fields when official scores are available
         "hf_subset": "default",
         "languages": list(corpus.metadata.eval_langs),
-        "main_score": None, "spearman": None, "spearman_ci_low": None, "spearman_ci_high": None,
-        "spearman_top10": None, "kendall": None, "kendall_ap": None, "p_permutation": None,   # filled by rank_agreement
         "n_models": len(ratings),
         **{k: diag[k] for k in ("commit_rate", "tie_rate", "a_first_rate", "parse_failure_rate",
                                 "identical_retrieval_rate", "n_comparisons")},

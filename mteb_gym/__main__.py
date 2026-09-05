@@ -36,8 +36,9 @@ def main(argv=None) -> None:
         corpus_cap=args.corpus_cap,
     )
     print(result.leaderboard)
-    if result.judge.a_first_rate is not None:
-        print(f"\nposition bias (a_first_rate): {result.judge.a_first_rate:.2f}  (0.50 = unbiased)")
+    bias = result.record["scores"]["test"][0]["a_first_rate"]
+    if bias is not None:
+        print(f"\nposition bias (a_first_rate): {bias:.2f}  (0.50 = unbiased)")
     print(f"results -> {result.record_path}")
 
 

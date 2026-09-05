@@ -61,11 +61,7 @@ Models run through mteb itself (`mteb.evaluate` on a task the gym builds from th
    Pairwise outcomes are aggregated with Bradley–Terry to produce the leaderboard. Uncertainty is estimated by resampling queries.
 
 6. **Record the run**  
-   Queries, retrievals, judge verdicts, model revisions, corpus controls, configuration hashes, Git revision, and result metadata are persisted. This lets reported rankings and downstream statistics be reproduced offline without repeating LLM calls.
-
-Corpus sampling and size controls are part of the run identity, so incompatible runs cannot silently share cached artifacts.
-
-A completely fresh LLM call is not guaranteed to be byte-identical because inference may be nondeterministic; the recorded run artifacts are the reproducibility boundary for a reported result.
+   Queries, mteb's retrieval predictions, judge verdicts, model revisions, the resolved configuration, and the Git revision are persisted. Every stage is cached by content, so a rerun repeats only what changed and a reported ranking can be reproduced offline without new LLM calls.
 
 ## Validation against MTEB
 
@@ -76,13 +72,11 @@ The official labels are never exposed to the Gym pipeline itself.
 ```python
 from mteb_gym import rank_agreement
 
-agreement = rank_agreement("results/")
-print(agreement)
+agreement = rank_agreement("results/")                          # official scores from the MTEB results repository
+agreement = rank_agreement("results/", evaluate_missing=True)   # also run mteb on the real task for models without one
 ```
 
-`rank_agreement()` uses the MTEB result cache when a score is available and follows the normal MTEB evaluation path when a required model/task result is missing.
-
-Agreement statistics include Spearman and Kendall rank correlation.
+Official scores come from the MTEB results repository through mteb's result cache; models without one are skipped unless `evaluate_missing=True`, in which case mteb evaluates them on the real task and stores the result in that cache. The output records per model whether its anchor was official or self-run, and reports Spearman, Kendall, top-10 Spearman and AP correlation with bootstrap intervals.
 
 For a genuinely unlabeled corpus, validation is optional — the Gym leaderboard itself is the output.
 

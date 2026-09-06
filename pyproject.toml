@@ -4,26 +4,33 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mteb-gym"
-version = "0.2.0"
-description = "Offline, LLM-judged arena for embedding models (AlpacaEval-style)"
+version = "0.3.0"
+description = "Label-free, LLM-judged model selection for embedding models, built on mteb"
 readme = "README.md"
-requires-python = ">=3.9"
-dependencies = [
-    "numpy",
-    "scipy",
-]
+requires-python = ">=3.10"
+dependencies = ["mteb[bm25s]>=2.0", "openai>=1.40"]  # mteb brings torch, sentence-transformers, datasets; openai for any /chat/completions endpoint
 
 [project.optional-dependencies]
-# retrieval models + MTEB corpora
-retrieval = ["sentence-transformers>=2.7", "mteb>=2.0", "torch"]
-# judge backends
-claude = ["anthropic>=0.40"]
-openai = ["openai>=1.40"]   # also covers vLLM / Together / local Qwen3 servers
-# everything
-full = [
-    "sentence-transformers>=2.7", "mteb>=2.0", "torch",
-    "anthropic>=0.40", "openai>=1.40",
-]
+colbert = ["mteb[pylate]>=2.0"]
+
+[project.scripts]
+mteb-gym = "mteb_gym.__main__:main"
+
+[dependency-groups]
+test = ["pytest>=8"]
+dev = [{ include-group = "test" }, "ruff"]
 
 [tool.setuptools]
-packages = ["gym"]
+packages = ["mteb_gym"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["F", "I", "E", "W", "UP"]
+ignore = ["E501"]   # the formatter owns line length

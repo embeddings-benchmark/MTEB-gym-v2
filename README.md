@@ -15,36 +15,50 @@ MTEB Gym originated from the [MTEB Gym discussion](https://github.com/embeddings
 ## Installation
 
 ```bash
-pip install -e ".[full]"
+pip install "mteb-gym @ git+https://github.com/embeddings-benchmark/MTEB-gym-v2"
 ```
+
+Add `[colbert]` for late-interaction models.
 
 ## Quickstart
 
+**Dry run: no API key, no GPU, about a minute on CPU.** The mock judge answers deterministically, so this checks that everything is installed and wired up; it does not rank models.
+
 ```python
-from gym import Gym, GymConfig, rank_agreement
+import mteb_gym as gym
 
-cfg = GymConfig(
-    task_name="NFCorpus",          # any MTEB retrieval task, or corpus_path="docs/" for your own corpus
-    models=[                       # MTEB model ids; "bm25" is the lexical baseline
-        "bm25",
-        "sentence-transformers/all-MiniLM-L6-v2",
-        "intfloat/e5-base-v2",
-    ],
-    judge="Qwen/Qwen3-8B",          # served at judge_base_url; "claude-*" ids use the Anthropic API
-    judge_base_url="http://localhost:8000/v1",
-    generator="claude-sonnet-4-5",  # a different model family from the judge
-    output_dir="results/nfcorpus",
+result = gym.run(
+    corpus="NanoNFCorpusRetrieval",
+    models=["mteb/baseline-bm25s", "sentence-transformers/all-MiniLM-L6-v2"],
+    judge=gym.llm("mock"),
+    n_queries=20,
+    out="results/demo",
 )
-
-gym = Gym(cfg)
-gym.run()
-print(gym.leaderboard_str)
-
-# optional, only for tasks with official labels: how well the gym ranking agrees with MTEB
-print(rank_agreement(cfg.output_dir))
+print(result.leaderboard)
 ```
 
-Embedding models are loaded through MTEB, so prompts, revisions, and encoding behavior are the ones an official MTEB run uses. Any OpenAI-compatible endpoint (vLLM, OpenAI, Together) works for the judge and generator; use `judge_client=` / `gen_client=` on `Gym(...)` to pass a client object instead.
+**Real run.** Any MTEB retrieval task or a directory / .jsonl of your own documents, MTEB model ids, and an LLM judge and a generator from different model families. LLMs are addressed by model id and an OpenAI-compatible endpoint: a local vLLM or Ollama server, OpenAI, Together, OpenRouter, or the compatible endpoints of Anthropic and Gemini. For the giant BEIR corpora use mteb's HardNegatives tasks (as MTEB(eng, v2) does) or the Nano tasks; the gym does not subsample corpora.
+
+```python
+result = gym.run(
+    corpus="NFCorpus",
+    models=["mteb/baseline-bm25s", "BAAI/bge-base-en-v1.5", "intfloat/e5-base-v2"],
+    judge=gym.llm("Qwen/Qwen3-8B", base_url="http://localhost:8000/v1"),
+    generator=gym.llm("MiniMaxAI/MiniMax-M2", base_url="http://localhost:8001/v1"),
+    n_queries=100,
+    out="results/nfcorpus",
+)
+print(result.leaderboard)
+print(result.agreement())  # MTEB tasks only: agreement of the ranking with official scores
+```
+
+Or from the shell:
+
+```bash
+mteb-gym --corpus NFCorpus --models mteb/baseline-bm25s BAAI/bge-base-en-v1.5 --judge Qwen/Qwen3-8B --judge-url http://localhost:8000/v1
+```
+
+Models run through mteb itself (`mteb.evaluate` on a task the gym builds from the corpus and its queries), so prompts, revisions, similarity functions and sparse / late-interaction paths are exactly those of an official MTEB run.
 
 ## How it works
 
@@ -64,11 +78,7 @@ Embedding models are loaded through MTEB, so prompts, revisions, and encoding be
    Pairwise outcomes are aggregated with Bradley–Terry to produce the leaderboard. Uncertainty is estimated by resampling queries.
 
 6. **Record the run**  
-   Queries, retrievals, judge verdicts, model revisions, corpus controls, configuration hashes, Git revision, and result metadata are persisted. This lets reported rankings and downstream statistics be reproduced offline without repeating LLM calls.
-
-Corpus sampling and size controls are part of the run identity, so incompatible runs cannot silently share cached artifacts.
-
-A completely fresh LLM call is not guaranteed to be byte-identical because inference may be nondeterministic; the recorded run artifacts are the reproducibility boundary for a reported result.
+   Queries, mteb's retrieval predictions, judge verdicts, model revisions, the resolved configuration, and the Git revision are persisted. Every stage is cached by content, so a rerun repeats only what changed and a reported ranking can be reproduced offline without new LLM calls.
 
 ## Validation against MTEB
 
@@ -77,52 +87,41 @@ When human-labeled MTEB results exist, they can be used **after** a Gym run to m
 The official labels are never exposed to the Gym pipeline itself.
 
 ```python
-from gym import rank_agreement
+from mteb_gym import rank_agreement
 
-agreement = rank_agreement("results/")
-print(agreement)
+agreement = rank_agreement("results/")  # official scores from the MTEB results repository
+agreement = rank_agreement("results/", evaluate_missing=True)  # also run mteb on the real task for models without one
 ```
 
-`rank_agreement()` uses the MTEB result cache when a score is available and follows the normal MTEB evaluation path when a required model/task result is missing.
-
-Agreement statistics include Spearman and Kendall rank correlation.
+Official scores come from the MTEB results repository through mteb's result cache; models without one are skipped unless `evaluate_missing=True`, in which case mteb evaluates them on the real task and stores the result in that cache. The output records per model whether its anchor was official or self-run, and reports Spearman, Kendall, top-10 Spearman and AP correlation with bootstrap intervals.
 
 For a genuinely unlabeled corpus, validation is optional — the Gym leaderboard itself is the output.
 
 ## Architecture
 
 ```text
-gym/
-├── config.py             experiment configuration
-├── encoders.py           encoding through mteb
-├── clients.py            LLM clients
-├── query_generator.py    query generation + filtering
-├── retrieval_harness.py  retrieval + caching
-├── baselines.py          retrieval baselines
-├── judge.py              pairwise judging
-├── scoring.py            Bradley–Terry scoring
-├── results.py            standardized result artifacts
-├── repro.py              reproducibility metadata
-├── gym.py                experiment orchestration
-└── validate.py           rank agreement
+mteb_gym/
+├── corpus.py     load an MTEB task corpus or a local one
+├── queries.py    synthetic query generation and filtering
+├── task.py       the corpus + queries as an mteb retrieval task
+├── retrieval.py  mteb.evaluate per model; read mteb's predictions
+├── judge.py      pairwise LLM judging, both presentation orders
+├── rank.py       Bradley-Terry with bootstrap CIs
+├── record.py     the result record
+├── validate.py   agreement with official MTEB scores
+├── llm.py        judge / generator clients
+└── run.py        the pipeline, every stage cached on disk
 ```
 
-## Testing
-
-Run offline tests:
+## Development
 
 ```bash
-python tests/test_pipeline.py
+make install     # uv sync with the dev tools
+make test        # pytest, including two end-to-end runs (a local corpus and a Nano MTEB task)
+make lint        # ruff format + check
 ```
 
-The tests cover:
-- end-to-end pipeline
-- reproducibility helpers
-- standardized result artifacts
-- corpus controls
-- caching/resume behavior
-- unified Gym API
-- MTEB rank-agreement fallback behavior
+Tests use the mock LLM: no API key, no GPU. The end-to-end runs download a small MTEB task and MiniLM once. CI runs the suite on Python 3.10 and 3.13.
 
 ## Citation
 

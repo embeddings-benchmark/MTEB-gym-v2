@@ -30,7 +30,7 @@ def main(argv=None) -> None:
     ap.add_argument("--top-k", type=int, default=10)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--no-filter", action="store_true")
-    ap.add_argument("--out", default="results")
+    ap.add_argument("--output-folder", default="results")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
 
@@ -44,8 +44,8 @@ def main(argv=None) -> None:
         n_queries=args.n_queries,
         top_k=args.top_k,
         seed=args.seed,
-        filter=not args.no_filter,
-        out=args.out,
+        filter_queries=not args.no_filter,
+        output_folder=args.output_folder,
     )
     print(result.leaderboard)
     bias = result.record["diagnostics"]["a_first_rate"]

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from mteb_gym import Result, load_results, results, validate
+from mteb_gym import Result, agreement, load_results, results
 from mteb_gym.judge import Judge, Verdict, judge_system, task_prompt
 from mteb_gym.llm import MockClient
 from mteb_gym.queries import Query, QueryGenerator, extract_json
@@ -103,7 +103,7 @@ def test_rank():
 
 def test_correlate():
     g = {f"m{i}": float(i) for i in range(5)}
-    res = validate.correlate(g, dict(g), bootstrap=50)
+    res = agreement.correlate(g, dict(g), bootstrap=50)
     assert abs(res["spearman_rho"] - 1.0) < 1e-9
     import numpy as np
 
@@ -111,10 +111,10 @@ def test_correlate():
     top = list(range(15, 25))
     np.random.default_rng(0).shuffle(top)
     gym = {f"m{i}": float(v) for i, v in zip(range(15, 25), top)} | {f"m{i}": float(i) for i in range(15)}
-    out = validate.correlate(gym, truth, bootstrap=0)
+    out = agreement.correlate(gym, truth, bootstrap=0)
     assert out["spearman_rho"] > 0.85 and abs(out["spearman_top10"]) < 0.6  # strong models shuffled among themselves
     a = np.arange(10, dtype=float)
-    assert validate._tau_ap(a, a) == 1.0 and validate._tau_ap(-a, a) == -1.0
+    assert agreement._tau_ap(a, a) == 1.0 and agreement._tau_ap(-a, a) == -1.0
 
 
 def test_instruction():
@@ -222,8 +222,8 @@ def test_record():
 
 
 def test_agreement():
-    original = validate.fetch_truth
-    validate.fetch_truth = lambda models, task, **kw: (
+    original = agreement.fetch_truth
+    agreement.fetch_truth = lambda models, task, **kw: (
         {"model_a": 30.0, "model_b": 20.0, "model_c": 10.0},
         {m: "official" for m in models},
     )
@@ -240,8 +240,8 @@ def test_agreement():
             }
             res = Result(rec, Path(tmp) / "records" / "NFCorpus.json")
             res.to_disk()
-            agreement = res.agreement(bootstrap=100, seed=0)
-            assert agreement["spearman_rho"] == 1.0 and agreement["kendall_tau"] == 1.0
+            agr = res.agreement(bootstrap=100, seed=0)
+            assert agr["spearman_rho"] == 1.0 and agr["kendall_tau"] == 1.0
             assert Result.from_disk(res.path).record["agreement"]["truth_source"] == {
                 m: "official" for m in ("model_a", "model_b", "model_c")
             }
@@ -252,7 +252,7 @@ def test_agreement():
                 .startswith("local corpus")
             )
     finally:
-        validate.fetch_truth = original
+        agreement.fetch_truth = original
 
 
 def test_end_to_end_local_corpus():
@@ -277,8 +277,8 @@ def test_end_to_end_local_corpus():
             models=["mteb/baseline-bm25s", "sentence-transformers/all-MiniLM-L6-v2"],
             judge=Counting(),
             n_queries=4,
-            filter=False,
-            out=Path(tmp) / "out",
+            filter_queries=False,
+            output_folder=Path(tmp) / "out",
             workers=1,
         )
         res = run(docs, **kw)
@@ -315,7 +315,7 @@ def test_end_to_end_mteb_task():
             ["mteb/baseline-bm25s", "sentence-transformers/all-MiniLM-L6-v2"],
             judge=llm("mock"),
             n_queries=8,
-            out=Path(tmp),
+            output_folder=Path(tmp),
             workers=1,
         )
         cfg = res.record["config"]

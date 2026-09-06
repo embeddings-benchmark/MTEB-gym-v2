@@ -32,7 +32,7 @@ result = gym.run(
     models=["mteb/baseline-bm25s", "sentence-transformers/all-MiniLM-L6-v2"],
     judge=gym.llm("mock"),
     n_queries=20,
-    out="results/demo",
+    output_folder="results/demo",
 )
 print(result.leaderboard)
 ```
@@ -46,7 +46,7 @@ result = gym.run(
     judge=gym.llm("Qwen/Qwen3-8B", base_url="http://localhost:8000/v1"),
     generator=gym.llm("MiniMaxAI/MiniMax-M2", base_url="http://localhost:8001/v1"),
     n_queries=100,
-    out="results/nfcorpus",
+    output_folder="results/nfcorpus",
 )
 print(result.leaderboard)
 result.to_dataframe()  # one row per model
@@ -103,7 +103,7 @@ mteb_gym/
 ├── judge.py      pairwise LLM judging, both presentation orders
 ├── rank.py       Bradley-Terry with bootstrap CIs
 ├── results.py    records: Result, Results, load_results
-├── validate.py   agreement with official MTEB scores
+├── agreement.py  agreement with official MTEB scores
 ├── llm.py        judge / generator clients
 └── run.py        the pipeline, every stage cached on disk
 ```

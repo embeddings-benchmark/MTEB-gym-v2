@@ -3,10 +3,10 @@ One call runs the pipeline and caches every stage on disk:
 
     corpus -> queries -> mteb retrieval per model -> pairwise judging -> Bradley-Terry -> record
 
-    out/queries/      generated queries, one file per (corpus, generator, parameters)
-    out/predictions/  <model>@<revision>/<query set>/  mteb's prediction file
-    out/verdicts/     one file per model pair
-    out/records/      one record per run: ratings, config, diagnostics
+    <output_folder>/queries/      generated queries, one file per (corpus, generator, parameters)
+    <output_folder>/predictions/  <model>@<revision>/<query set>/  mteb's prediction file
+    <output_folder>/verdicts/     one file per model pair
+    <output_folder>/records/      one record per run: ratings, config, diagnostics
 """
 
 from __future__ import annotations
@@ -124,8 +124,8 @@ def run(
     n_queries: int = 100,
     top_k: int = 10,
     seed: int = 0,
-    filter: bool = True,
-    out: str | Path = "results",
+    filter_queries: bool = True,
+    output_folder: str | Path = "results",
     batch_size: int = 32,
     workers: int = 8,
 ) -> Result:
@@ -138,7 +138,7 @@ def run(
     default the task's own mteb prompt. `batch_size` is the encode batch; `workers`
     the concurrent LLM calls."""
     started = time.time()
-    out, models = Path(out), list(models)
+    out, models = Path(output_folder), list(models)
     if not models:
         raise ValueError("no models given")
     gen_client = generator if generator is not None else judge
@@ -146,7 +146,7 @@ def run(
     corp = corpus_mod.load(corpus)
     description, description_source = resolve_description(task_description, corp)
     gen = QueryGenerator(
-        gen_client, task_description=description, n_queries=n_queries, seed=seed, filter=filter, workers=workers
+        gen_client, task_description=description, n_queries=n_queries, seed=seed, filter=filter_queries, workers=workers
     )
 
     if queries == "synthetic":

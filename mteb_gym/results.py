@@ -149,16 +149,16 @@ class Result:
 
     def agreement(self, *, evaluate_missing: bool = False, bootstrap: int = 1000, seed: int = 0) -> dict:
         """Rank agreement with the official MTEB ranking; written into the record as "agreement"."""
-        from . import validate
+        from . import agreement as agree
 
         if self.record["source"] != "mteb":
             agreement = {"error": "local corpus: no official scores to compare with"}
         else:
             ratings = {r["model"]: r["rating"] for r in self.record["ratings"]}
-            truth, source = validate.fetch_truth(
+            truth, source = agree.fetch_truth(
                 list(ratings), self.record["task_name"], evaluate_missing=evaluate_missing
             )
-            agreement = validate.correlate(ratings, truth, bootstrap=bootstrap, seed=seed)
+            agreement = agree.correlate(ratings, truth, bootstrap=bootstrap, seed=seed)
             agreement["truth_source"] = source
         self.record["agreement"] = agreement
         if self.path:

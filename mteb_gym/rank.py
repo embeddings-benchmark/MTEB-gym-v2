@@ -8,7 +8,7 @@ and the MTEB Arena do. Confidence intervals bootstrap over queries.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 import numpy as np
 
@@ -129,11 +129,14 @@ def rate(verdicts, bootstrap: int = BOOTSTRAP, seed: int = 0) -> list[ModelRatin
     return sorted(out, key=lambda m: m.rating, reverse=True)
 
 
-def format_leaderboard(ratings: list[ModelRating]) -> str:
+def format_leaderboard(ratings: list) -> str:
+    """From ModelRating objects or the record's rating rows."""
+    rows = [asdict(m) | {"model": m.name} if isinstance(m, ModelRating) else m for m in ratings]
     lines = ["=" * 78, f"{'Rank':<5}{'Model':<38}{'Rating':>8}{'CI±':>7}{'W':>5}{'L':>5}{'T':>5}", "-" * 78]
-    for i, m in enumerate(ratings, 1):
+    for i, r in enumerate(rows, 1):
+        ci = (r["ci_high"] - r["ci_low"]) / 2
         lines.append(
-            f"{i:<5}{m.name.split('/')[-1][:36]:<38}{m.rating:>8.0f}{m.ci:>7.0f}"
-            f"{m.wins:>5.0f}{m.losses:>5.0f}{m.ties:>5.0f}"
+            f"{i:<5}{r['model'].split('/')[-1][:36]:<38}{r['rating']:>8.0f}{ci:>7.0f}"
+            f"{r['wins']:>5.0f}{r['losses']:>5.0f}{r['ties']:>5.0f}"
         )
     return "\n".join(lines + ["=" * 78])

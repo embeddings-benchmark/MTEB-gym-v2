@@ -52,11 +52,6 @@ def predict(model_name: str, task, folder: Path, *, batch_size: int = 32) -> Pat
     return path
 
 
-def revision(path: Path) -> str | None:
-    """The model revision mteb recorded in its prediction file."""
-    return (json.loads(path.read_text()).get("mteb_model_meta") or {}).get("revision")
-
-
 def top_k(path: Path, corpus: Corpus, queries: dict[str, str], k: int) -> list[Ranked]:
     hits = json.loads(path.read_text())["default"]["test"]
     out = []

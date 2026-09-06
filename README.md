@@ -32,12 +32,12 @@ result = gym.run(
     models=["mteb/baseline-bm25s", "sentence-transformers/all-MiniLM-L6-v2"],
     judge=gym.llm("mock"),
     n_queries=20,
-    out="results/demo",
+    output_folder="results/demo",
 )
 print(result.leaderboard)
 ```
 
-**Real run.** Any MTEB retrieval task or a directory / .jsonl of your own documents, MTEB model ids, and an LLM judge and a generator from different model families. LLMs are addressed by model id and an OpenAI-compatible endpoint, whether a local vLLM server or a provider API (Anthropic and Gemini expose compatible endpoints).
+**Real run.** Any MTEB retrieval task or a directory / .jsonl of your own documents, MTEB model ids, and an LLM judge and a generator from different model families. LLMs are addressed by model id and an OpenAI-compatible endpoint, whether a local vLLM server or a provider API (Anthropic and Gemini expose compatible endpoints). If you already have queries, pass them instead of generating: `queries="queries.jsonl"` (or a list). `task_description` is one sentence on what counts as a good result, given to the generator and the judge; for an MTEB task it defaults to the task's own prompt.
 
 ```python
 result = gym.run(
@@ -46,10 +46,10 @@ result = gym.run(
     judge=gym.llm("Qwen/Qwen3-8B", base_url="http://localhost:8000/v1"),
     generator=gym.llm("MiniMaxAI/MiniMax-M2", base_url="http://localhost:8001/v1"),
     n_queries=100,
-    out="results/nfcorpus",
+    output_folder="results/nfcorpus",
 )
 print(result.leaderboard)
-print(result.agreement())  # MTEB tasks only: agreement of the ranking with official scores
+result.to_dataframe()  # one row per model
 ```
 
 Or from the shell:
@@ -82,16 +82,15 @@ Models run through mteb itself (`mteb.evaluate` on a task the gym builds from th
 
 ## Validation against MTEB
 
-For an MTEB task, the ranking can be compared with the official scores after a run; the labels never enter the pipeline.
+For an MTEB task, the ranking can be compared with the official scores after a run; the labels never enter the pipeline. `queries="original"` runs the queries the dataset came with instead of synthetic ones, which isolates the judge.
 
 ```python
-from mteb_gym import rank_agreement
-
-agreement = rank_agreement("results/")  # official scores from the MTEB results repository
-agreement = rank_agreement("results/", evaluate_missing=True)  # also evaluate models that have no official result
+result.agreement()  # one run
+gym.load_results("results/").agreement()  # every run under a directory
+gym.load_results("results/").to_dataframe()  # all runs in one frame
 ```
 
-Official scores come from the MTEB results repository through mteb's result cache. Models without one are skipped unless `evaluate_missing=True`, which runs mteb on the real task and stores the result in that cache. The output records whether each anchor was official or self-run, with Spearman, Kendall, top-10 Spearman and AP correlation and bootstrap intervals.
+Official scores come from the MTEB results repository through mteb's result cache. Models without one are skipped unless `agreement(evaluate_missing=True)`, which runs mteb on the real task and stores the result in that cache. The output records whether each anchor was official or self-run, with Spearman, Kendall, top-10 Spearman and AP correlation and bootstrap intervals.
 
 ## Architecture
 
@@ -103,8 +102,8 @@ mteb_gym/
 ├── retrieval.py  mteb.evaluate per model; read mteb's predictions
 ├── judge.py      pairwise LLM judging, both presentation orders
 ├── rank.py       Bradley-Terry with bootstrap CIs
-├── record.py     the result record
-├── validate.py   agreement with official MTEB scores
+├── results.py    records: Result, Results, load_results
+├── agreement.py  agreement with official MTEB scores
 ├── llm.py        judge / generator clients
 └── run.py        the pipeline, every stage cached on disk
 ```

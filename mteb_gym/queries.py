@@ -33,7 +33,7 @@ _GEN_SYSTEM = (
     "any single shown document. Vary phrasing and specificity. "
     'Reply with strict JSON: {"query": "..."}'
 )
-_GEN_TASK = "The retrieval task is: {intent}. Every query must express that kind of need. "
+_GEN_TASK = "The retrieval task is: {task}. Every query must express that kind of need. "
 
 _FILTER_SYSTEM = (
     "You rate the quality of search queries for benchmarking retrieval models. "
@@ -67,7 +67,7 @@ class QueryGenerator:
         self,
         client,
         *,
-        intent: str | None = None,
+        task_description: str | None = None,
         n_queries: int = 100,
         seed: int = 0,
         filter: bool = True,
@@ -81,7 +81,7 @@ class QueryGenerator:
     ):
         self.client = client
         self.params = dict(
-            intent=intent,
+            task_description=task_description,
             n_queries=n_queries,
             seed=seed,
             filter=filter,
@@ -92,7 +92,7 @@ class QueryGenerator:
             min_score=min_score,
             dedup=dedup,
         )  # everything that changes the query set
-        task = _GEN_TASK.format(intent=intent.rstrip(".")) if intent else ""
+        task = _GEN_TASK.format(task=task_description.rstrip(".")) if task_description else ""
         self.system = _GEN_SYSTEM.replace("{task}", task)
         self.workers = max(1, workers)
         self.n_generated: int | None = None  # pre-filter count, for the record

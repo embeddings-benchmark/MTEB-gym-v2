@@ -32,9 +32,7 @@ class Corpus:
 
 
 def load(spec: str | Path) -> Corpus:
-    """`spec` is an mteb task name, or a path to a directory / .jsonl. For a giant
-    corpus use mteb's HardNegatives or Nano variant of the task; the gym does not
-    subsample corpora."""
+    """`spec` is an mteb task name, or a path to a directory / .jsonl of documents."""
     path = Path(spec)
     return _load_local(path) if path.exists() else _load_task(str(spec))
 

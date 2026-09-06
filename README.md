@@ -32,8 +32,8 @@ import mteb_gym as gym
 result = gym.run(
     corpus="NFCorpus",
     models=["mteb/baseline-bm25s", "BAAI/bge-base-en-v1.5", "intfloat/e5-base-v2"],
-    generator=gym.LLM("gpt-5"),  # writes the queries
-    judge=gym.LLM("gpt-5-mini"),  # compares what the models retrieve
+    generator=gym.LLM("gpt-4.1-mini"),  # writes the queries
+    judge=gym.LLM("gpt-4.1"),  # compares what the models retrieve
     n_queries=100,
     output_folder="results/nfcorpus",
 )
@@ -43,7 +43,7 @@ print(result.leaderboard)
 Or from the shell:
 
 ```bash
-mteb-gym --corpus NFCorpus --models mteb/baseline-bm25s BAAI/bge-base-en-v1.5 intfloat/e5-base-v2 --generator gpt-5 --judge gpt-5-mini
+mteb-gym --corpus NFCorpus --models mteb/baseline-bm25s BAAI/bge-base-en-v1.5 intfloat/e5-base-v2 --generator gpt-4.1-mini --judge gpt-4.1
 ```
 
 This prints the leaderboard and saves the run under `output_folder`: the generated queries, each model's retrieval, every judge verdict, and a record with ratings and confidence intervals.
@@ -56,7 +56,7 @@ This prints the leaderboard and saves the run under `output_folder`: the generat
 
 **Models.** MTEB model ids, such as `"BAAI/bge-base-en-v1.5"` or `"mteb/baseline-bm25s"`. They run through mteb itself, so prompts, revisions, similarity functions and sparse / late-interaction paths are exactly those of an official MTEB run.
 
-**LLMs.** `gym.LLM(model)` talks to OpenAI and reads `OPENAI_API_KEY`, and `OPENAI_BASE_URL` if set, like the openai SDK. `gym.LLM(model, base_url=..., api_key=...)` addresses any other OpenAI-compatible endpoint: a vLLM or Ollama server you run, Together, OpenRouter, or the compatible endpoints of Anthropic and Gemini. The gym itself needs no GPU. For an experiment, take the judge and the generator from different model families.
+**LLMs.** `gym.LLM(model)` talks to OpenAI and reads `OPENAI_API_KEY`, and `OPENAI_BASE_URL` if set, like the openai SDK. `gym.LLM(model, base_url=..., api_key=...)` addresses any other OpenAI-compatible endpoint: a vLLM or Ollama server you run, Together, OpenRouter, or the compatible endpoints of Anthropic and Gemini. The gym itself needs no GPU. Pick models that accept `temperature`: the generator samples at 0.7 and the judge at 0, and OpenAI's reasoning models (the gpt-5 family) reject both settings. For an experiment, take the judge and the generator from different model families.
 
 **Queries.** By default the generator writes `n_queries` queries from the corpus. If you already have queries, pass them instead: `queries="queries.jsonl"` (`id` and `text` fields), a `.txt` with one query per line, or a list of strings. For an MTEB task, `queries="original"` runs the queries the dataset came with.
 
@@ -66,10 +66,10 @@ This prints the leaderboard and saves the run under `output_folder`: the generat
 
 ```text
 results/nfcorpus/
-├── records/NFCorpus__gpt-5-mini__gpt-5__q100-s0-<hash>.json   # the run: ratings, config, diagnostics
-├── queries/                                                     # generated queries with quality scores
-├── predictions/                                                 # mteb's retrieval output per model
-└── verdicts/                                                    # judge verdicts per model pair, with reasoning
+├── records/NFCorpus__gpt-4.1__gpt-4.1-mini__q100-s0-<hash>.json   # the run: ratings, config, diagnostics
+├── queries/                                                         # generated queries with quality scores
+├── predictions/                                                     # mteb's retrieval output per model
+└── verdicts/                                                        # judge verdicts per model pair, with reasoning
 ```
 
 A rerun of the same configuration reuses all of it and makes no LLM calls. Read a run back with `gym.Result.from_disk(path)` (`.leaderboard`, `.to_dataframe()`), or every run under a directory with `gym.load_results("results/")`.

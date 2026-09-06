@@ -132,8 +132,8 @@ def run(
     """Rank `models` on `corpus` (an mteb task name or a local path) with an LLM judge.
 
     `judge` and `generator` are clients from mteb_gym.llm. `queries`: "synthetic" (the
-    generator writes them; defaults to the judge), "task" (the benchmark's own queries
-    and labels, for validation), or your own as a path / list. `task_description` is
+    generator writes them; defaults to the judge), "original" (the queries and labels the
+    dataset came with, for validation), or your own as a path / list. `task_description` is
     one sentence on what counts as a good result, given to generator and judge; by
     default the task's own mteb prompt. `batch_size` is the encode batch; `workers`
     the concurrent LLM calls."""
@@ -155,11 +155,11 @@ def run(
         query_set = f"{slug(corp.id)}-{slug(_model_id(gen_client))}-{_sha(sorted(gen.params.items()))}"
         qs, n_generated = _cached_queries(out / "queries" / f"{query_set}.json", gen, corp.docs)
         texts, arm = {q.qid: q.text for q in qs}, "synthetic"
-    elif queries == "task":
+    elif queries == "original":
         if not corp.queries:
             raise ValueError(f"{corp.name} has no queries of its own")
-        qs, n_generated, texts, arm = None, None, corp.queries, "task"
-        query_set = f"{slug(corp.id)}-task"
+        qs, n_generated, texts, arm = None, None, corp.queries, "original"
+        query_set = f"{slug(corp.id)}-original"
     else:
         qs, n_generated = own_queries(queries), None
         texts, arm = {q.qid: q.text for q in qs}, "own"

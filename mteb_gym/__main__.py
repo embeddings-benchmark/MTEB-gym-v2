@@ -19,7 +19,9 @@ def main(argv=None) -> None:
     ap.add_argument("--generator", default=None, help="query generator model id (default: the judge)")
     ap.add_argument("--generator-url", default=None)
     ap.add_argument(
-        "--queries", default="synthetic", help="'synthetic', 'task' (the benchmark's own), or a path to your queries"
+        "--queries",
+        default="synthetic",
+        help="'synthetic', 'original' (the dataset's own queries), or a path to your queries",
     )
     ap.add_argument(
         "--task-description",

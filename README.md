@@ -82,7 +82,7 @@ Models run through mteb itself (`mteb.evaluate` on a task the gym builds from th
 
 ## Validation against MTEB
 
-For an MTEB task, the ranking can be compared with the official scores after a run; the labels never enter the pipeline. `queries="task"` runs the benchmark's own queries instead of synthetic ones, which isolates the judge.
+For an MTEB task, the ranking can be compared with the official scores after a run; the labels never enter the pipeline. `queries="original"` runs the queries the dataset came with instead of synthetic ones, which isolates the judge.
 
 ```python
 result.agreement()  # one run

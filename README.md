@@ -18,7 +18,7 @@ MTEB Gym originated from the [MTEB Gym discussion](https://github.com/embeddings
 pip install "mteb-gym @ git+https://github.com/embeddings-benchmark/MTEB-gym-v2"
 ```
 
-Add extras for a real judge: `"mteb-gym[openai] @ git+..."` for any OpenAI-compatible endpoint, `[claude]` for the Anthropic API, `[colbert]` for late-interaction models.
+Add `[colbert]` for late-interaction models.
 
 ## Quickstart
 
@@ -37,14 +37,14 @@ result = gym.run(
 print(result.leaderboard)
 ```
 
-**Real run.** Any MTEB retrieval task or a directory / .jsonl of your own documents, MTEB model ids, an LLM judge on any OpenAI-compatible endpoint, and a generator from a different model family. For the giant BEIR corpora use mteb's HardNegatives tasks (as MTEB(eng, v2) does) or the Nano tasks; the gym does not subsample corpora.
+**Real run.** Any MTEB retrieval task or a directory / .jsonl of your own documents, MTEB model ids, and an LLM judge and a generator from different model families. LLMs are addressed by model id and an OpenAI-compatible endpoint: a local vLLM or Ollama server, OpenAI, Together, OpenRouter, or the compatible endpoints of Anthropic and Gemini. For the giant BEIR corpora use mteb's HardNegatives tasks (as MTEB(eng, v2) does) or the Nano tasks; the gym does not subsample corpora.
 
 ```python
 result = gym.run(
     corpus="NFCorpus",
     models=["mteb/baseline-bm25s", "BAAI/bge-base-en-v1.5", "intfloat/e5-base-v2"],
     judge=gym.llm("Qwen/Qwen3-8B", base_url="http://localhost:8000/v1"),
-    generator=gym.AnthropicClient("claude-sonnet-4-5"),
+    generator=gym.llm("MiniMaxAI/MiniMax-M2", base_url="http://localhost:8001/v1"),
     n_queries=100,
     out="results/nfcorpus",
 )

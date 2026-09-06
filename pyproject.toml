@@ -8,11 +8,9 @@ version = "0.3.0"
 description = "Label-free, LLM-judged model selection for embedding models, built on mteb"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["mteb[bm25s]>=2.0"]   # mteb brings torch, sentence-transformers, datasets, numpy, scipy
+dependencies = ["mteb[bm25s]>=2.0", "openai>=1.40"]  # mteb brings torch, sentence-transformers, datasets; openai for any /chat/completions endpoint
 
 [project.optional-dependencies]
-openai = ["openai>=1.40"]     # judge / generator on any /chat/completions endpoint (vLLM, OpenAI, Together)
-claude = ["anthropic>=0.40"]  # judge / generator on the Anthropic API
 colbert = ["mteb[pylate]>=2.0"]
 
 [project.scripts]

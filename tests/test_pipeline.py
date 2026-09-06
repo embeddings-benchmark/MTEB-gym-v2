@@ -294,8 +294,8 @@ def test_end_to_end_local_corpus():
         )  # mteb's pins carried over
         assert len(list((Path(tmp) / "out" / "predictions").rglob("*_predictions.json"))) == 2
         calls["n"] = 0
-        again = run(docs, **kw)  # everything cached: no LLM calls, same ratings
-        assert calls["n"] == 0 and again.record["ratings"] == rec["ratings"]
+        again = run(docs, **kw)  # everything cached: no LLM calls, the record stands as written
+        assert calls["n"] == 0 and again.record == rec and again.path == res.path
         own = run(docs, queries=["statins and heart disease", "fiber and the gut", "vitamin D for asthma"], **kw)
         assert own.record["config"]["arm"] == "own" and own.record["config"]["n_queries"] == 3
         df = load_results(Path(tmp) / "out").to_dataframe()

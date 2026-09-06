@@ -203,7 +203,9 @@ def run(
         "models": models,
     }
     experiment["config_hash"] = results.config_hash(experiment)
-    record = results.build_record(corp, experiment, ratings, verdicts, time.time() - started, revisions)
-    result = Result(record, results.record_path(out, corp.name, experiment))
+    path = results.record_path(out, corp.name, experiment)
+    if path.exists():  # same configuration, same verdicts: the record stands, agreement included
+        return Result.from_disk(path)
+    result = Result(results.build_record(corp, experiment, ratings, verdicts, time.time() - started, revisions), path)
     result.to_disk()
     return result

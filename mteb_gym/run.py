@@ -139,8 +139,7 @@ def run(
     to the judge. `arm="human"` uses the task's own queries and qrels instead of
     synthetic queries. `intent` conditions both generation and judging: "auto" = the
     task's own criterion, None = generic relevance, or text. `batch_size` is the encode
-    batch; `workers` the concurrent LLM calls. For a giant corpus use mteb's HardNegatives
-    or Nano variant of the task."""
+    batch; `workers` the concurrent LLM calls."""
     started = time.time()
     out, models = Path(out), list(models)
     if not models:

@@ -2,10 +2,10 @@
 
 Label-free, LLM-judged model selection for embedding models.
 
-Give MTEB Gym a corpus. If you have queries it uses them, otherwise it generates them. Every candidate model retrieves for the same queries, an LLM judge compares the retrieved lists pairwise, and Bradley–Terry turns the comparisons into a ranking. No relevance labels are needed at any step.
+Give MTEB Gym a corpus, an MTEB task or your own documents. It generates queries for that corpus, or takes queries you supply. Every candidate model retrieves for the same queries, an LLM judge compares the retrieved lists pairwise, and Bradley–Terry turns the comparisons into a ranking. No relevance labels are needed at any step.
 
 ```text
-corpus + queries (yours, or generated) → retrieval → pairwise LLM judging → model ranking
+corpus → queries (generated, or yours) → retrieval → pairwise LLM judging → model ranking
 ```
 
 **Given a new corpus with no relevance labels, which embedding model should you use?**

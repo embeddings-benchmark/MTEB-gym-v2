@@ -4,7 +4,7 @@ One call runs the pipeline and caches every stage on disk:
     corpus -> queries -> mteb retrieval per model -> pairwise judging -> Bradley-Terry -> record
 
     out/queries/      generated queries, one file per (corpus, generator, parameters)
-    out/predictions/  <model>/<query set>/  mteb's prediction file
+    out/predictions/  <model>@<revision>/<query set>/  mteb's prediction file
     out/verdicts/     one file per model pair
     out/records/      one record per run: ratings, config, diagnostics
 """
@@ -76,12 +76,9 @@ def own_queries(spec) -> list[Query]:
     return [Query(f"q{i}", line.strip(), []) for i, line in enumerate(lines)]
 
 
-def verdict_key(
-    judge: Judge, top_k: int, query_set: str, a: str, rev_a: str | None, b: str, rev_b: str | None, mteb_version: str
-) -> str:
-    """Identity of a pair's verdicts, the way mteb keys results: judge, resolved
-    prompt, top_k, query set, both models at their revisions, mteb version."""
-    return _sha(_model_id(judge.client), judge.system, top_k, query_set, f"{a}@{rev_a}", f"{b}@{rev_b}", mteb_version)
+def verdict_key(judge: Judge, top_k: int, query_set: str, a: str, rev_a: str | None, b: str, rev_b: str | None) -> str:
+    """Identity of a pair's verdicts: judge, resolved prompt, top_k, query set, both models at their revisions."""
+    return _sha(_model_id(judge.client), judge.system, top_k, query_set, f"{a}@{rev_a}", f"{b}@{rev_b}")
 
 
 def judge_pair_cached(
@@ -168,21 +165,20 @@ def run(
         texts, arm = {q.qid: q.text for q in qs}, "own"
         query_set = f"{slug(corp.id)}-own-{_sha(*(f'{k}:{v}' for k, v in texts.items()))}"
 
+    import mteb
+
+    revisions = {m: mteb.get_model_meta(m).revision for m in models}  # mteb's pins: part of every cache identity
     gym_task = task_mod.build(corp, qs)
     ranked: dict[str, list[Ranked]] = {}
-    revisions: dict[str, str | None] = {}
     for m in models:
-        path = retrieval.predict(m, gym_task, out / "predictions" / slug(m) / query_set, batch_size=batch_size)
-        ranked[m] = retrieval.top_k(path, corp, texts, top_k)
-        revisions[m] = retrieval.revision(path)
-
-    import mteb
+        folder = out / "predictions" / f"{slug(m)}@{revisions[m]}" / query_set
+        ranked[m] = retrieval.top_k(retrieval.predict(m, gym_task, folder, batch_size=batch_size), corp, texts, top_k)
 
     jd = Judge(judge, instruction=description, workers=workers)
     verdicts: list[Verdict] = []
     for i, (a, b) in enumerate(itertools.combinations(models, 2), 1):
         logger.info("pair %d/%d: %s vs %s", i, len(models) * (len(models) - 1) // 2, a, b)
-        key = verdict_key(jd, top_k, query_set, a, revisions[a], b, revisions[b], mteb.__version__)
+        key = verdict_key(jd, top_k, query_set, a, revisions[a], b, revisions[b])
         verdicts.extend(judge_pair_cached(out / "verdicts", jd, a, b, ranked[a], ranked[b], key))
 
     ratings = rate(verdicts, seed=seed)
@@ -201,6 +197,7 @@ def run(
         "seed": seed,
         **({f"gen_{k}": v for k, v in gen.params.items()} if arm == "synthetic" else {}),
         "models": models,
+        "model_revisions": revisions,
     }
     experiment["config_hash"] = results.config_hash(experiment)
     path = results.record_path(out, corp.name, experiment)

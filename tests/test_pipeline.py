@@ -153,7 +153,7 @@ def test_verdict_cache():
     with tempfile.TemporaryDirectory() as tmp:
         vdir = Path(tmp)
         judge = Judge(Counting(seed=1), workers=1)
-        key = verdict_key(judge, 5, "qs", "m_a", "r1", "m_b", "r1", "2.15")
+        key = verdict_key(judge, 5, "qs", "m_a", "r1", "m_b", "r1")
         full = judge_pair_cached(vdir, judge, "m_a", "m_b", ra, rb, key)
         assert len(full) == 6 and calls["n"] == 12
         # simulate a crash mid-pair: keep two verdicts in the JSONL, drop the final file, rerun
@@ -166,9 +166,8 @@ def test_verdict_cache():
         assert [v.qid for v in resumed] == [q.qid for q in queries] and calls["n"] == 8, (
             "resume judges only the 4 missing"
         )
-        # a new revision of one model, or a new mteb version, is a new key: no reuse
-        assert verdict_key(judge, 5, "qs", "m_a", "r1", "m_b", "r2", "2.15") != key
-        assert verdict_key(judge, 5, "qs", "m_a", "r1", "m_b", "r1", "2.16") != key
+        # a new revision of one model is a new key: no reuse
+        assert verdict_key(judge, 5, "qs", "m_a", "r1", "m_b", "r2") != key
         calls["n"] = 0
         judge_pair_cached(
             vdir,
@@ -177,7 +176,7 @@ def test_verdict_cache():
             "m_b",
             ra,
             fake_ranked("c", queries),
-            verdict_key(judge, 5, "qs", "m_a", "r1", "m_b", "r2", "2.15"),
+            verdict_key(judge, 5, "qs", "m_a", "r1", "m_b", "r2"),
         )
         assert calls["n"] == 12 and len(list(vdir.glob("*.json"))) == 2
 
@@ -292,7 +291,9 @@ def test_end_to_end_local_corpus():
         assert all(
             r["revision"] == mteb.get_model_meta(r["model"]).revision for r in rec["ratings"]
         )  # mteb's pins carried over
-        assert len(list((Path(tmp) / "out" / "predictions").rglob("*_predictions.json"))) == 2
+        preds = list((Path(tmp) / "out" / "predictions").rglob("*_predictions.json"))
+        assert len(preds) == 2 and all("@" in p.parts[-3] for p in preds)  # <model>@<revision>/<query set>/
+        assert rec["config"]["model_revisions"] == {r["model"]: r["revision"] for r in rec["ratings"]}
         calls["n"] = 0
         again = run(docs, **kw)  # everything cached: no LLM calls, the record stands as written
         assert calls["n"] == 0 and again.record == rec and again.path == res.path

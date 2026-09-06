@@ -2,10 +2,10 @@
 
 Label-free, LLM-judged model selection for embedding models.
 
-MTEB Gym takes an unlabeled corpus, generates synthetic queries, retrieves documents with candidate embedding models, compares their results with an LLM judge, and aggregates the pairwise outcomes into a Bradley–Terry ranking.
+Give MTEB Gym a corpus. If you have queries it uses them, otherwise it generates them. Every candidate model retrieves for the same queries, an LLM judge compares the retrieved lists pairwise, and Bradley–Terry turns the comparisons into a ranking. No relevance labels are needed at any step.
 
 ```text
-corpus → synthetic queries → retrieval → pairwise LLM judging → model ranking
+corpus + queries (yours, or generated) → retrieval → pairwise LLM judging → model ranking
 ```
 
 **Given a new corpus with no relevance labels, which embedding model should you use?**
@@ -37,7 +37,19 @@ result = gym.run(
 print(result.leaderboard)
 ```
 
-**Real run.** Any MTEB retrieval task or a directory / .jsonl of your own documents, MTEB model ids, and an LLM judge and a generator from different model families. LLMs are addressed by model id and an OpenAI-compatible endpoint, whether a local vLLM server or a provider API (Anthropic and Gemini expose compatible endpoints). If you already have queries, pass them instead of generating: `queries="queries.jsonl"` (or a list). `task_description` is one sentence on what counts as a good result, given to the generator and the judge; for an MTEB task it defaults to the task's own prompt.
+## Usage
+
+`gym.run` needs three things: a corpus, the models to rank, and an LLM judge.
+
+**Corpus.** An MTEB retrieval task name such as `"NFCorpus"`, or a path to your own documents: a directory of `.txt` / `.md` files, or a `.jsonl` with `id` and `text` fields.
+
+**Models.** MTEB model ids, such as `"BAAI/bge-base-en-v1.5"` or `"mteb/baseline-bm25s"`. They run through mteb itself, so prompts, revisions, similarity functions and sparse / late-interaction paths are exactly those of an official MTEB run.
+
+**LLMs.** `gym.LLM(model, base_url=...)` addresses any OpenAI-compatible endpoint: a local vLLM or Ollama server, OpenAI, Together, OpenRouter, or the compatible endpoints of Anthropic and Gemini. `api_key` defaults to `OPENAI_API_KEY`. Use a judge and a generator from different model families.
+
+**Queries.** By default the generator writes `n_queries` queries from the corpus. If you already have queries, pass them instead: `queries="queries.jsonl"` (`id` and `text` fields), a `.txt` with one query per line, or a list of strings. For an MTEB task, `queries="original"` runs the queries the dataset came with.
+
+**Task description.** One sentence on what counts as a good result, given to the generator and the judge, for example `"Given a claim, find documents that refute it"`. For an MTEB task it defaults to the task's own prompt.
 
 ```python
 result = gym.run(
@@ -49,7 +61,6 @@ result = gym.run(
     output_folder="results/nfcorpus",
 )
 print(result.leaderboard)
-result.to_dataframe()  # one row per model
 ```
 
 Or from the shell:
@@ -58,7 +69,17 @@ Or from the shell:
 mteb-gym --corpus NFCorpus --models mteb/baseline-bm25s BAAI/bge-base-en-v1.5 --judge Qwen/Qwen3-8B --judge-url http://localhost:8000/v1
 ```
 
-Models run through mteb itself (`mteb.evaluate` on a task the gym builds from the corpus and its queries), so prompts, revisions, similarity functions and sparse / late-interaction paths are exactly those of an official MTEB run.
+**Output.** Everything lands under `output_folder`:
+
+```text
+results/nfcorpus/
+├── records/NFCorpus__Qwen3-8B__MiniMax-M2__q100-s0-<hash>.json   # the run: ratings, config, diagnostics
+├── queries/                                                        # generated queries with quality scores
+├── predictions/                                                    # mteb's retrieval output per model
+└── verdicts/                                                       # judge verdicts per model pair, with reasoning
+```
+
+A rerun of the same configuration reuses all of it and makes no LLM calls. Read a run back with `gym.Result.from_disk(path)` (`.leaderboard`, `.to_dataframe()`), or every run under a directory with `gym.load_results("results/")`.
 
 ## How it works
 

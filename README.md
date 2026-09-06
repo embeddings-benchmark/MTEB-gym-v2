@@ -18,11 +18,11 @@ MTEB Gym originated from the [MTEB Gym discussion](https://github.com/embeddings
 pip install "mteb-gym @ git+https://github.com/embeddings-benchmark/MTEB-gym-v2"
 ```
 
-Add `[openai]` and/or `[claude]` for a real judge, `[colbert]` for late-interaction models.
+Add extras for a real judge: `"mteb-gym[openai] @ git+..."` for any OpenAI-compatible endpoint, `[claude]` for the Anthropic API, `[colbert]` for late-interaction models.
 
 ## Quickstart
 
-No API key, no GPU, about a minute on CPU. The mock judge answers deterministically: this checks the plumbing, it does not rank models.
+**Dry run: no API key, no GPU, about a minute on CPU.** The mock judge answers deterministically, so this checks that everything is installed and wired up; it does not rank models.
 
 ```python
 import mteb_gym as gym
@@ -37,7 +37,7 @@ result = gym.run(
 print(result.leaderboard)
 ```
 
-A real run: any MTEB retrieval task or a directory / .jsonl of your own documents, MTEB model ids, an LLM judge on any OpenAI-compatible endpoint, and a generator from a different model family.
+**Real run.** Any MTEB retrieval task or a directory / .jsonl of your own documents, MTEB model ids, an LLM judge on any OpenAI-compatible endpoint, and a generator from a different model family.
 
 ```python
 result = gym.run(
@@ -117,11 +117,11 @@ mteb_gym/
 
 ```bash
 make install     # uv sync with the dev tools
-make test        # pytest; the end-to-end test runs when mteb is installed
+make test        # pytest, including two end-to-end runs (a local corpus and a Nano MTEB task)
 make lint        # ruff format + check
 ```
 
-Tests run on a mock LLM: no network, no GPU, no API key. CI runs them on Python 3.10 and 3.13 with mteb installed.
+Tests use the mock LLM: no API key, no GPU. The end-to-end runs download a small MTEB task and MiniLM once. CI runs the suite on Python 3.10 and 3.13.
 
 ## Citation
 

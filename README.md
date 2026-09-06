@@ -30,7 +30,7 @@ import mteb_gym as gym
 result = gym.run(
     corpus="NanoNFCorpusRetrieval",
     models=["mteb/baseline-bm25s", "sentence-transformers/all-MiniLM-L6-v2"],
-    judge=gym.llm("mock"),
+    judge=gym.MockLLM(),
     n_queries=20,
     output_folder="results/demo",
 )
@@ -43,8 +43,8 @@ print(result.leaderboard)
 result = gym.run(
     corpus="NFCorpus",
     models=["mteb/baseline-bm25s", "BAAI/bge-base-en-v1.5", "intfloat/e5-base-v2"],
-    judge=gym.llm("Qwen/Qwen3-8B", base_url="http://localhost:8000/v1"),
-    generator=gym.llm("MiniMaxAI/MiniMax-M2", base_url="http://localhost:8001/v1"),
+    judge=gym.LLM("Qwen/Qwen3-8B", base_url="http://localhost:8000/v1"),
+    generator=gym.LLM("MiniMaxAI/MiniMax-M2", base_url="http://localhost:8001/v1"),
     n_queries=100,
     output_folder="results/nfcorpus",
 )
@@ -104,7 +104,7 @@ mteb_gym/
 ├── rank.py       Bradley-Terry with bootstrap CIs
 ├── results.py    records: Result, Results, load_results
 ├── agreement.py  agreement with official MTEB scores
-├── llm.py        judge / generator clients
+├── llm.py        LLM (any OpenAI-compatible endpoint) and MockLLM
 └── run.py        the pipeline, every stage cached on disk
 ```
 

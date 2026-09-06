@@ -9,7 +9,7 @@ import pytest
 
 from mteb_gym import Result, agreement, load_results, results
 from mteb_gym.judge import Judge, Verdict, judge_system, task_prompt
-from mteb_gym.llm import MockClient
+from mteb_gym.llm import MockLLM
 from mteb_gym.queries import Query, QueryGenerator, extract_json
 from mteb_gym.rank import format_leaderboard, rate
 from mteb_gym.retrieval import Ranked
@@ -38,12 +38,12 @@ def test_extract_json():
 
 def test_query_generation():
     corpus = make_corpus()
-    gen = QueryGenerator(MockClient(), n_queries=8, filter=True, workers=1)
+    gen = QueryGenerator(MockLLM(), n_queries=8, filter=True, workers=1)
     kept = gen.run(corpus)
     assert gen.n_generated >= 8 and len(kept) <= 8 and all(q.quality is not None for q in kept)
 
     # worker count must never change the query set, including under flaky calls
-    class Flaky(MockClient):
+    class Flaky(MockLLM):
         def chat(self, messages, temperature=0.0):
             prompt = " ".join(m.get("content", "") for m in messages)
             return "no json here" if self._hash(prompt) % 3 == 0 else super().chat(messages, temperature)
@@ -51,7 +51,7 @@ def test_query_generation():
     def gen_with(workers, client):
         return QueryGenerator(client, n_queries=12, filter=False, workers=workers).generate(corpus)
 
-    for client in (MockClient, Flaky):
+    for client in (MockLLM, Flaky):
         seq, par = gen_with(1, client()), gen_with(4, client())
         assert len(seq) == 12
         assert [(q.qid, q.text, tuple(q.seed_doc_ids)) for q in par] == [
@@ -62,8 +62,8 @@ def test_query_generation():
 def test_judge():
     queries = [Query(f"q{i}", f"query {i} about statins", ["D0"]) for i in range(30)]
     ra, rb = fake_ranked("a", queries), fake_ranked("b", queries)
-    seq = Judge(MockClient(seed=1), workers=1).judge_all(ra, rb, "m_a", "m_b")
-    par = Judge(MockClient(seed=1), workers=8).judge_all(ra, rb, "m_a", "m_b")
+    seq = Judge(MockLLM(seed=1), workers=1).judge_all(ra, rb, "m_a", "m_b")
+    par = Judge(MockLLM(seed=1), workers=8).judge_all(ra, rb, "m_a", "m_b")
     assert all(0.0 <= v.score_a <= 1.0 for v in seq)
     assert [(v.qid, v.score_a) for v in par] == [(v.qid, v.score_a) for v in seq]
 
@@ -133,9 +133,9 @@ def test_instruction():
     )
     assert resolve_description("Prefer replies that resolve the ticket", corpus)[1] == "config:task_description"
     assert resolve_description(None, types.SimpleNamespace(metadata=types.SimpleNamespace(prompt=None))) == (None, None)
-    gen = QueryGenerator(MockClient(), task_description="Given a claim, find documents that refute the claim")
+    gen = QueryGenerator(MockLLM(), task_description="Given a claim, find documents that refute the claim")
     assert "refute the claim" in gen.system and gen.params["task_description"]  # part of the query cache key
-    assert "retrieval task is" not in QueryGenerator(MockClient()).system
+    assert "retrieval task is" not in QueryGenerator(MockLLM()).system
     assert "refute the claim" in judge_system("Given a claim, find documents that refute the claim")
     assert "retrieval task is" not in judge_system(None)
 
@@ -143,7 +143,7 @@ def test_instruction():
 def test_verdict_cache():
     calls = {"n": 0}
 
-    class Counting(MockClient):
+    class Counting(MockLLM):
         def chat(self, messages, temperature=0.0):
             calls["n"] += 1
             return super().chat(messages, temperature)
@@ -263,7 +263,7 @@ def test_end_to_end_local_corpus():
 
     calls = {"n": 0}
 
-    class Counting(MockClient):
+    class Counting(MockLLM):
         def chat(self, messages, temperature=0.0):
             calls["n"] += 1
             return super().chat(messages, temperature)
@@ -307,13 +307,13 @@ def test_end_to_end_mteb_task():
     pytest.importorskip("mteb")
     pytest.importorskip("bm25s")
     pytest.importorskip("sentence_transformers")
-    from mteb_gym import llm, run
+    from mteb_gym import run
 
     with tempfile.TemporaryDirectory() as tmp:
         res = run(
             "NanoNFCorpusRetrieval",
             ["mteb/baseline-bm25s", "sentence-transformers/all-MiniLM-L6-v2"],
-            judge=llm("mock"),
+            judge=MockLLM(),
             n_queries=8,
             output_folder=Path(tmp),
             workers=1,

@@ -14,7 +14,7 @@ from mteb_gym.llm import MockClient
 from mteb_gym.queries import Query, QueryGenerator, extract_json
 from mteb_gym.rank import format_leaderboard, rate
 from mteb_gym.retrieval import Ranked
-from mteb_gym.run import judge_pair_cached, resolve_intent
+from mteb_gym.run import judge_pair_cached, resolve_intent, verdict_key
 
 
 def make_corpus(n=40):
@@ -151,21 +151,32 @@ def test_verdict_cache():
     with tempfile.TemporaryDirectory() as tmp:
         vdir = Path(tmp)
         judge = Judge(Counting(seed=1), workers=1)
-        full = judge_pair_cached(vdir, judge, "m_a", "m_b", ra, rb, top_k=5)
+        key = verdict_key(judge, 5, "qs", "m_a", "r1", "m_b", "r1", "2.15")
+        full = judge_pair_cached(vdir, judge, "m_a", "m_b", ra, rb, key)
         assert len(full) == 6 and calls["n"] == 12
-        files = sorted(vdir.glob("*.json"))
         # simulate a crash mid-pair: keep two verdicts in the JSONL, drop the final file, rerun
-        jsonl = files[0].with_suffix(".jsonl")
+        final = next(vdir.glob("*.json"))
+        jsonl = final.with_suffix(".jsonl")
         jsonl.write_text("\n".join(jsonl.read_text().splitlines()[:2]) + "\n")
-        files[0].unlink()
+        final.unlink()
         calls["n"] = 0
-        resumed = judge_pair_cached(vdir, judge, "m_a", "m_b", ra, rb, top_k=5)
+        resumed = judge_pair_cached(vdir, judge, "m_a", "m_b", ra, rb, key)
         assert [v.qid for v in resumed] == [q.qid for q in queries] and calls["n"] == 8, (
             "resume judges only the 4 missing"
         )
-        # a change in one model's retrieval must not reuse the cached verdicts
+        # a new revision of one model, or a new mteb version, is a new key: no reuse
+        assert verdict_key(judge, 5, "qs", "m_a", "r1", "m_b", "r2", "2.15") != key
+        assert verdict_key(judge, 5, "qs", "m_a", "r1", "m_b", "r1", "2.16") != key
         calls["n"] = 0
-        judge_pair_cached(vdir, judge, "m_a", "m_b", ra, fake_ranked("c", queries), top_k=5)
+        judge_pair_cached(
+            vdir,
+            judge,
+            "m_a",
+            "m_b",
+            ra,
+            fake_ranked("c", queries),
+            verdict_key(judge, 5, "qs", "m_a", "r1", "m_b", "r2", "2.15"),
+        )
         assert calls["n"] == 12 and len(list(vdir.glob("*.json"))) == 2
 
 
@@ -187,12 +198,16 @@ def test_record():
         "identical_retrieval_rate": 1 / 3,
     }
     corpus = types.SimpleNamespace(
-        name="demo", fingerprint="abc", metadata=types.SimpleNamespace(dataset={"path": "x", "revision": "y"})
+        name="demo",
+        id="local:demo@abc",
+        source="local",
+        metadata=types.SimpleNamespace(dataset={"path": "x", "revision": "y"}),
     )
     exp = {"arm": "synthetic", "judge_model": "mock", "generator_model": "mock", "seed": 0}
     exp["config_hash"] = record.config_hash(exp)
     rec = record.build(corpus, exp, rate(verdicts, bootstrap=0), verdicts, evaluation_time=1.0)
     assert rec["task_name"] == "demo" and rec["diagnostics"]["tie_rate"] == 2 / 3 and len(rec["ratings"]) == 2
+    assert rec["source"] == "local" and rec["corpus_id"] == "local:demo@abc"
     assert record.result_directory(Path("r"), exp) == Path("r") / "mock__mock" / exp["config_hash"]
 
 
@@ -215,6 +230,7 @@ def test_rank_agreement_api():
                             {"model": "model_c", "rating": 900},
                         ],
                         "config": {},
+                        "source": "mteb",
                     }
                 )
             )
@@ -285,3 +301,4 @@ def test_end_to_end_mteb_task():
         assert len(res.ratings) == 2 and cfg["n_queries"] >= 5  # the mock's queries survive filtering
         assert cfg["intent_source"] == "mteb:task_prompt" and "retrieve" in cfg["intent"]  # the task's own criterion
         assert res.record["diagnostics"]["n_comparisons"] == cfg["n_queries"]
+        assert res.record["source"] == "mteb" and "@" in res.record["corpus_id"] and cfg["query_set"]

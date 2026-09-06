@@ -116,6 +116,9 @@ def rank_agreement(
         data = json.loads(path.read_text())
         if not {"task_name", "ratings", "config"} <= set(data):
             continue  # only gym result records; other JSON files in the tree are ignored
+        if data.get("source") == "local":
+            out[str(path)] = {"error": "local corpus: no official scores to compare with"}
+            continue
         ratings = {r["model"]: r["rating"] for r in data["ratings"]}
         truth, source = fetch_truth(list(ratings), data["task_name"], evaluate_missing=evaluate_missing)
         agreement = correlate(ratings, truth, bootstrap=bootstrap, seed=seed)

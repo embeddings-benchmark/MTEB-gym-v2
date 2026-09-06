@@ -81,7 +81,8 @@ def build(
     dataset = getattr(corpus.metadata, "dataset", None) or {}
     return {
         "task_name": corpus.name,
-        "corpus_fingerprint": corpus.fingerprint,
+        "source": corpus.source,
+        "corpus_id": corpus.id,
         "dataset": {"path": dataset.get("path"), "revision": dataset.get("revision")},
         "mteb_version": _version("mteb"),
         "gym_version": _version("mteb-gym"),

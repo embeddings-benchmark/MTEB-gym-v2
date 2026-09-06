@@ -29,7 +29,6 @@ def main(argv=None) -> None:
         help="generic relevance for generation and judging instead of the task's own criterion",
     )
     ap.add_argument("--no-filter", action="store_true")
-    ap.add_argument("--corpus-cap", type=int, default=None)
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
 
@@ -45,7 +44,6 @@ def main(argv=None) -> None:
         arm=args.arm,
         intent=None if args.no_intent else "auto",
         filter=not args.no_filter,
-        corpus_cap=args.corpus_cap,
     )
     print(result.leaderboard)
     bias = result.record["diagnostics"]["a_first_rate"]

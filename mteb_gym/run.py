@@ -77,16 +77,18 @@ def _cached_queries(path: Path, gen: QueryGenerator, docs: dict[str, str]) -> tu
     return queries, gen.n_generated
 
 
-def _lists_fingerprint(ranked: list[Ranked]) -> str:
-    return _sha(*(f"{r.qid}:{','.join(r.doc_ids)}" for r in ranked))
+def verdict_key(
+    judge: Judge, top_k: int, query_set: str, a: str, rev_a: str | None, b: str, rev_b: str | None, mteb_version: str
+) -> str:
+    """Identity of a pair's verdicts, the way mteb keys results: judge, resolved
+    prompt, top_k, query set, both models at their revisions, mteb version."""
+    return _sha(_model_id(judge.client), judge.system, top_k, query_set, f"{a}@{rev_a}", f"{b}@{rev_b}", mteb_version)
 
 
 def judge_pair_cached(
-    vdir: Path, judge: Judge, a: str, b: str, ra: list[Ranked], rb: list[Ranked], top_k: int
+    vdir: Path, judge: Judge, a: str, b: str, ra: list[Ranked], rb: list[Ranked], key: str
 ) -> list[Verdict]:
-    """Verdicts for one pair, cached on judge model, resolved prompt, top_k and both
-    retrieved lists; streamed to JSONL as they complete so a crash resumes."""
-    key = _sha(_model_id(judge.client), judge.system, top_k, _lists_fingerprint(ra), _lists_fingerprint(rb))
+    """Verdicts for one pair under `key`; streamed to JSONL as they complete so a crash resumes."""
     path = vdir / f"{slug(a)}__{slug(b)}-{key}.json"
     if path.exists():
         return [Verdict(**v) for v in json.loads(path.read_text())]
@@ -128,7 +130,6 @@ def run(
     arm: str = "synthetic",
     intent: str | None = "auto",
     filter: bool = True,
-    corpus_cap: int | None = None,
     batch_size: int = 32,
     workers: int = 8,
 ) -> Result:
@@ -137,8 +138,9 @@ def run(
     `judge` and `generator` are LLM clients (see mteb_gym.llm); the generator defaults
     to the judge. `arm="human"` uses the task's own queries and qrels instead of
     synthetic queries. `intent` conditions both generation and judging: "auto" = the
-    task's own criterion, None = generic relevance, or text. `corpus_cap` subsamples
-    giant corpora; `batch_size` is the encode batch; `workers` the concurrent LLM calls."""
+    task's own criterion, None = generic relevance, or text. `batch_size` is the encode
+    batch; `workers` the concurrent LLM calls. For a giant corpus use mteb's HardNegatives
+    or Nano variant of the task."""
     started = time.time()
     out, models = Path(out), list(models)
     if not models:
@@ -147,7 +149,7 @@ def run(
     if generator is None:
         logger.warning("no generator given: the judge also writes the queries (self-preference risk)")
 
-    corp = corpus_mod.load(corpus, cap=corpus_cap, seed=seed, keep_judged=(arm == "human"))
+    corp = corpus_mod.load(corpus)
 
     criterion, criterion_source = resolve_intent(intent, corp)
     gen = QueryGenerator(gen_client, intent=criterion, n_queries=n_queries, seed=seed, filter=filter, workers=workers)
@@ -155,15 +157,11 @@ def run(
         if not corp.queries:
             raise ValueError(f"{corp.name} has no queries for a human-query arm")
         queries, n_generated, texts = None, None, corp.queries
+        query_set = f"{slug(corp.id)}-human"
     else:
-        qpath = (
-            out
-            / "queries"
-            / f"{corp.fingerprint}-{slug(_model_id(gen_client))}-{_sha(sorted(gen.params.items()))}.json"
-        )
-        queries, n_generated = _cached_queries(qpath, gen, corp.docs)
+        query_set = f"{slug(corp.id)}-{slug(_model_id(gen_client))}-{_sha(sorted(gen.params.items()))}"
+        queries, n_generated = _cached_queries(out / "queries" / f"{query_set}.json", gen, corp.docs)
         texts = {q.qid: q.text for q in queries}
-    query_set = _sha(*(f"{k}:{v}" for k, v in texts.items()))
 
     gym_task = task_mod.build(corp, queries)
     ranked: dict[str, list[Ranked]] = {}
@@ -173,15 +171,20 @@ def run(
         ranked[m] = retrieval.top_k(path, corp, texts, top_k)
         revisions[m] = retrieval.revision(path)
 
+    import mteb
+
     jd = Judge(judge, instruction=criterion, workers=workers)
     verdicts: list[Verdict] = []
     for i, (a, b) in enumerate(itertools.combinations(models, 2), 1):
         logger.info("pair %d/%d: %s vs %s", i, len(models) * (len(models) - 1) // 2, a, b)
-        verdicts.extend(judge_pair_cached(out / "verdicts", jd, a, b, ranked[a], ranked[b], top_k))
+        key = verdict_key(jd, top_k, query_set, a, revisions[a], b, revisions[b], mteb.__version__)
+        verdicts.extend(judge_pair_cached(out / "verdicts", jd, a, b, ranked[a], ranked[b], key))
 
     ratings = rate(verdicts, seed=seed)
 
     experiment = {
+        "corpus_id": corp.id,
+        "query_set": query_set,
         "arm": arm,
         "judge_model": _model_id(judge),
         "generator_model": _model_id(gen_client) if arm == "synthetic" else None,
@@ -192,7 +195,6 @@ def run(
         "n_queries": len(texts),
         "top_k": top_k,
         "seed": seed,
-        "corpus_cap": corpus_cap,
         **{f"gen_{k}": v for k, v in gen.params.items()},
         "models": models,
     }

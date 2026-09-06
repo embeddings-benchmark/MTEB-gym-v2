@@ -37,7 +37,7 @@ result = gym.run(
 print(result.leaderboard)
 ```
 
-**Real run.** Any MTEB retrieval task or a directory / .jsonl of your own documents, MTEB model ids, an LLM judge on any OpenAI-compatible endpoint, and a generator from a different model family.
+**Real run.** Any MTEB retrieval task or a directory / .jsonl of your own documents, MTEB model ids, an LLM judge on any OpenAI-compatible endpoint, and a generator from a different model family. For the giant BEIR corpora use mteb's HardNegatives tasks (as MTEB(eng, v2) does) or the Nano tasks; the gym does not subsample corpora.
 
 ```python
 result = gym.run(

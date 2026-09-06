@@ -13,7 +13,7 @@ from .queries import Query
 
 def build(corpus: Corpus, queries: list[Query] | None):
     """An mteb AbsTaskRetrieval over `corpus`. `queries=None` uses the task's own
-    queries and qrels (human-query arm)."""
+    queries and qrels."""
     from datasets import Dataset
     from mteb.abstasks.retrieval import AbsTaskRetrieval
 
@@ -23,7 +23,10 @@ def build(corpus: Corpus, queries: list[Query] | None):
         texts, qrels = corpus.queries, corpus.qrels
     else:
         texts = {q.qid: q.text for q in queries}
-        qrels = {q.qid: {d: 1 for d in q.seed_doc_ids} for q in queries}
+        # mteb drops a query without a labelled document; the gym uses no labels, so a query
+        # without seed documents (your own queries) gets a placeholder that only satisfies mteb
+        placeholder = next(iter(corpus.docs))
+        qrels = {q.qid: {d: 1 for d in q.seed_doc_ids} or {placeholder: 1} for q in queries}
 
     ids = list(corpus.docs)
     data = {

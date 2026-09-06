@@ -1,20 +1,19 @@
 """Tests for mteb_gym on the mock LLM: no network, no GPU, no API key. The
 end-to-end test needs mteb, bm25s and sentence-transformers and is skipped otherwise."""
 
-import json
 import tempfile
 import types
 from pathlib import Path
 
 import pytest
 
-from mteb_gym import record, validate
+from mteb_gym import Result, load_results, results, validate
 from mteb_gym.judge import Judge, Verdict, judge_system, task_prompt
 from mteb_gym.llm import MockClient
 from mteb_gym.queries import Query, QueryGenerator, extract_json
 from mteb_gym.rank import format_leaderboard, rate
 from mteb_gym.retrieval import Ranked
-from mteb_gym.run import judge_pair_cached, resolve_intent, verdict_key
+from mteb_gym.run import judge_pair_cached, resolve_description, verdict_key
 
 
 def make_corpus(n=40):
@@ -81,7 +80,7 @@ def test_judge():
 
     verdicts = Judge(Garbage()).judge_all(ra[:5], rb[:5], "m_a", "m_b")
     assert all(v.score_a == 0.5 for v in verdicts)
-    assert record.verdict_diagnostics(verdicts)["parse_failure_rate"] == 1.0
+    assert results.verdict_diagnostics(verdicts)["parse_failure_rate"] == 1.0
 
 
 def test_rank():
@@ -128,11 +127,14 @@ def test_instruction():
     corpus = types.SimpleNamespace(
         metadata=types.SimpleNamespace(prompt="Given a claim, find documents that refute the claim")
     )
-    assert resolve_intent("auto", corpus) == ("Given a claim, find documents that refute the claim", "mteb:task_prompt")
-    assert resolve_intent(None, corpus) == (None, None)
-    assert resolve_intent("Prefer replies that resolve the ticket", corpus)[1] == "config:intent"
-    gen = QueryGenerator(MockClient(), intent="Given a claim, find documents that refute the claim")
-    assert "refute the claim" in gen.system and gen.params["intent"]  # intent conditions generation and its cache key
+    assert resolve_description(None, corpus) == (
+        "Given a claim, find documents that refute the claim",
+        "mteb:task_prompt",
+    )
+    assert resolve_description("Prefer replies that resolve the ticket", corpus)[1] == "config:task_description"
+    assert resolve_description(None, types.SimpleNamespace(metadata=types.SimpleNamespace(prompt=None))) == (None, None)
+    gen = QueryGenerator(MockClient(), task_description="Given a claim, find documents that refute the claim")
+    assert "refute the claim" in gen.system and gen.params["task_description"]  # part of the query cache key
     assert "retrieval task is" not in QueryGenerator(MockClient()).system
     assert "refute the claim" in judge_system("Given a claim, find documents that refute the claim")
     assert "retrieval task is" not in judge_system(None)
@@ -181,13 +183,13 @@ def test_verdict_cache():
 
 
 def test_record():
-    assert record.config_hash({"a": 1, "b": [2, 3]}) == record.config_hash({"b": [2, 3], "a": 1})
+    assert results.config_hash({"a": 1, "b": [2, 3]}) == results.config_hash({"b": [2, 3], "a": 1})
     verdicts = [
         Verdict("q0", "q", "a", "b", 1.0, raw=["A", "B"], parsed_ok=[True, True]),
         Verdict("q1", "q", "a", "b", 0.5, raw=["identical"]),
         Verdict("q2", "q", "a", "b", 0.5, raw=["tie", "tie"], parsed_ok=[False, True]),
     ]
-    d = record.verdict_diagnostics(verdicts)
+    d = results.verdict_diagnostics(verdicts)
     assert d == {
         "judge_calls": 4,
         "n_comparisons": 3,
@@ -203,15 +205,24 @@ def test_record():
         source="local",
         metadata=types.SimpleNamespace(dataset={"path": "x", "revision": "y"}),
     )
-    exp = {"arm": "synthetic", "judge_model": "mock", "generator_model": "mock", "seed": 0}
-    exp["config_hash"] = record.config_hash(exp)
-    rec = record.build(corpus, exp, rate(verdicts, bootstrap=0), verdicts, evaluation_time=1.0)
-    assert rec["task_name"] == "demo" and rec["diagnostics"]["tie_rate"] == 2 / 3 and len(rec["ratings"]) == 2
-    assert rec["source"] == "local" and rec["corpus_id"] == "local:demo@abc"
-    assert record.result_directory(Path("r"), exp) == Path("r") / "mock__mock" / exp["config_hash"]
+    exp = {"arm": "synthetic", "judge_model": "org/judge", "generator_model": "org/gen", "seed": 0, "n_queries": 3}
+    exp["config_hash"] = results.config_hash(exp)
+    rec = results.build_record(corpus, exp, rate(verdicts, bootstrap=0), verdicts, 1.0, {"a": "r1", "b": None})
+    assert rec["source"] == "local" and rec["diagnostics"]["tie_rate"] == 2 / 3
+    assert (
+        results.record_path(Path("out"), "demo", exp)
+        == Path("out") / "records" / f"demo__judge__gen__q3-s0-{exp['config_hash']}.json"
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        r = Result(rec, Path(tmp) / "records" / "demo.json")
+        r.to_disk()
+        again = Result.from_disk(r.path)
+        assert again.record == rec and "demo" not in again.leaderboard and "a" in again.leaderboard
+        df = load_results(tmp).to_dataframe()
+        assert list(df["model"]) == [x["model"] for x in rec["ratings"]] and set(df["task"]) == {"demo"}
 
 
-def test_rank_agreement_api():
+def test_agreement():
     original = validate.fetch_truth
     validate.fetch_truth = lambda models, task, **kw: (
         {"model_a": 30.0, "model_b": 20.0, "model_c": 10.0},
@@ -219,26 +230,28 @@ def test_rank_agreement_api():
     )
     try:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "NFCorpus.json"
-            path.write_text(
-                json.dumps(
-                    {
-                        "task_name": "NFCorpus",
-                        "ratings": [
-                            {"model": "model_a", "rating": 1100},
-                            {"model": "model_b", "rating": 1000},
-                            {"model": "model_c", "rating": 900},
-                        ],
-                        "config": {},
-                        "source": "mteb",
-                    }
-                )
-            )
-            out = validate.rank_agreement(path, bootstrap=100, seed=0)
-            agreement = json.loads(path.read_text())["agreement"]
+            rec = {
+                "task_name": "NFCorpus",
+                "source": "mteb",
+                "config": {},
+                "diagnostics": {},
+                "ratings": [
+                    {"model": m, "rating": r} for m, r in (("model_a", 1100), ("model_b", 1000), ("model_c", 900))
+                ],
+            }
+            res = Result(rec, Path(tmp) / "records" / "NFCorpus.json")
+            res.to_disk()
+            agreement = res.agreement(bootstrap=100, seed=0)
             assert agreement["spearman_rho"] == 1.0 and agreement["kendall_tau"] == 1.0
-            assert agreement["truth_source"] == {"model_a": "official", "model_b": "official", "model_c": "official"}
-            assert out[str(path)] == agreement
+            assert Result.from_disk(res.path).record["agreement"]["truth_source"] == {
+                m: "official" for m in ("model_a", "model_b", "model_c")
+            }
+            assert load_results(tmp).agreement(bootstrap=10)[str(res.path)]["spearman_rho"] == 1.0
+            assert (
+                Result({"source": "local", "task_name": "x", "ratings": []})
+                .agreement()["error"]
+                .startswith("local corpus")
+            )
     finally:
         validate.fetch_truth = original
 
@@ -270,16 +283,23 @@ def test_end_to_end_local_corpus():
             workers=1,
         )
         res = run(docs, **kw)
-        assert len(res.ratings) == 2 and res.record_path.exists()
-        rec = json.loads(res.record_path.read_text())
-        assert rec["config"]["n_queries"] == 4 and rec["config"]["intent"] is None  # local corpus: generic criterion
+        rec = res.record
+        assert len(rec["ratings"]) == 2 and res.path.exists() and res.path.parent.name == "records"
+        assert (
+            rec["config"]["n_queries"] == 4 and rec["config"]["task_description"] is None
+        )  # local corpus: no task prompt
+        assert rec["source"] == "local" and rec["corpus_id"].startswith("local:docs@")
         assert all(
             r["revision"] == mteb.get_model_meta(r["model"]).revision for r in rec["ratings"]
         )  # mteb's pins carried over
         assert len(list((Path(tmp) / "out" / "predictions").rglob("*_predictions.json"))) == 2
         calls["n"] = 0
         again = run(docs, **kw)  # everything cached: no LLM calls, same ratings
-        assert calls["n"] == 0 and [r.rating for r in again.ratings] == [r.rating for r in res.ratings]
+        assert calls["n"] == 0 and again.record["ratings"] == rec["ratings"]
+        own = run(docs, queries=["statins and heart disease", "fiber and the gut", "vitamin D for asthma"], **kw)
+        assert own.record["config"]["arm"] == "own" and own.record["config"]["n_queries"] == 3
+        df = load_results(Path(tmp) / "out").to_dataframe()
+        assert len(df) == 4 and set(df["arm"]) == {"synthetic", "own"}
 
 
 def test_end_to_end_mteb_task():
@@ -298,7 +318,7 @@ def test_end_to_end_mteb_task():
             workers=1,
         )
         cfg = res.record["config"]
-        assert len(res.ratings) == 2 and cfg["n_queries"] >= 5  # the mock's queries survive filtering
-        assert cfg["intent_source"] == "mteb:task_prompt" and "retrieve" in cfg["intent"]  # the task's own criterion
+        assert len(res.record["ratings"]) == 2 and cfg["n_queries"] >= 5  # the mock's queries survive filtering
+        assert cfg["task_description_source"] == "mteb:task_prompt" and "retrieve" in cfg["task_description"]
         assert res.record["diagnostics"]["n_comparisons"] == cfg["n_queries"]
         assert res.record["source"] == "mteb" and "@" in res.record["corpus_id"] and cfg["query_set"]

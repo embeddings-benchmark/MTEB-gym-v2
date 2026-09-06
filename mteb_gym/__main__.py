@@ -18,17 +18,19 @@ def main(argv=None) -> None:
     ap.add_argument("--judge-url", default=None, help="base url for the judge endpoint")
     ap.add_argument("--generator", default=None, help="query generator model id (default: the judge)")
     ap.add_argument("--generator-url", default=None)
+    ap.add_argument(
+        "--queries", default="synthetic", help="'synthetic', 'task' (the benchmark's own), or a path to your queries"
+    )
+    ap.add_argument(
+        "--task-description",
+        default=None,
+        help="one sentence on what counts as a good result (default: the task's mteb prompt)",
+    )
     ap.add_argument("--n-queries", type=int, default=100)
     ap.add_argument("--top-k", type=int, default=10)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--out", default="results/run")
-    ap.add_argument("--arm", choices=["synthetic", "human"], default="synthetic")
-    ap.add_argument(
-        "--no-intent",
-        action="store_true",
-        help="generic relevance for generation and judging instead of the task's own criterion",
-    )
     ap.add_argument("--no-filter", action="store_true")
+    ap.add_argument("--out", default="results")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
 
@@ -37,19 +39,19 @@ def main(argv=None) -> None:
         args.models,
         llm(args.judge, base_url=args.judge_url),
         llm(args.generator, base_url=args.generator_url) if args.generator else None,
+        queries=args.queries,
+        task_description=args.task_description,
         n_queries=args.n_queries,
         top_k=args.top_k,
         seed=args.seed,
-        out=args.out,
-        arm=args.arm,
-        intent=None if args.no_intent else "auto",
         filter=not args.no_filter,
+        out=args.out,
     )
     print(result.leaderboard)
     bias = result.record["diagnostics"]["a_first_rate"]
     if bias is not None:
         print(f"\nposition bias (a_first_rate): {bias:.2f}  (0.50 = unbiased)")
-    print(f"results -> {result.record_path}")
+    print(f"record -> {result.path}")
 
 
 if __name__ == "__main__":

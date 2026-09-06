@@ -1,16 +1,13 @@
 """
-Validation: how well the gym ranking agrees with the official MTEB ranking on
-the same task. Official scores come from the MTEB results repository through
-mteb's result cache. Models without one are skipped, or, with
-evaluate_missing=True, evaluated by mteb on the real task (real qrels) and
-stored in that same cache.
+Agreement between a gym ranking and the official MTEB ranking on the same task
+(used by Result.agreement). Official scores come from the MTEB results repository
+through mteb's result cache; models without one are skipped or, with
+evaluate_missing=True, evaluated by mteb on the real task and stored in that cache.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-from pathlib import Path
 
 import numpy as np
 
@@ -102,27 +99,3 @@ def correlate(
         "gym_ranking": sorted(shared, key=lambda m: -gym_ratings[m]),
         "truth_ranking": sorted(shared, key=lambda m: -ground_truth[m]),
     }
-
-
-def rank_agreement(
-    results_dir: str | Path, *, evaluate_missing: bool = False, bootstrap: int = 1000, seed: int = 0
-) -> dict[str, dict]:
-    """Agreement with the official MTEB ranking for every gym result record under
-    `results_dir` (or one record file); written into each record as "agreement"."""
-    root = Path(results_dir)
-    paths = [root] if root.is_file() else sorted(root.rglob("*.json"))
-    out: dict[str, dict] = {}
-    for path in paths:
-        data = json.loads(path.read_text())
-        if not {"task_name", "ratings", "config"} <= set(data):
-            continue  # only gym result records; other JSON files in the tree are ignored
-        if data.get("source") == "local":
-            out[str(path)] = {"error": "local corpus: no official scores to compare with"}
-            continue
-        ratings = {r["model"]: r["rating"] for r in data["ratings"]}
-        truth, source = fetch_truth(list(ratings), data["task_name"], evaluate_missing=evaluate_missing)
-        agreement = correlate(ratings, truth, bootstrap=bootstrap, seed=seed)
-        agreement["truth_source"] = source
-        out[str(path)] = data["agreement"] = agreement
-        path.write_text(json.dumps(data, indent=2))
-    return out

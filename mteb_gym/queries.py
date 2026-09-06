@@ -109,10 +109,10 @@ class QueryGenerator:
             {"role": "system", "content": self.system},
             {"role": "user", "content": f"Documents:\n{snippet}\n\nWrite one query as JSON."},
         ]
-        try:
-            text = (extract_json(self.client.chat(msg, temperature=0.7)).get("query") or "").strip()
-        except Exception:  # noqa: BLE001 - one flaky call must not kill the run
-            return None
+        # A client error propagates (the client has already retried): a dead endpoint or a bad
+        # key fails on the first call, not after minutes of empty waves. An unparseable answer
+        # yields None and the next wave retries with fresh documents.
+        text = (extract_json(self.client.chat(msg, temperature=0.7)).get("query") or "").strip()
         return Query(qid=f"q{idx}", text=text, seed_doc_ids=doc_ids) if text else None
 
     def generate(self, docs: dict[str, str]) -> list[Query]:
@@ -162,7 +162,7 @@ class QueryGenerator:
                 out = extract_json(self.client.chat(msg, temperature=0.0))
                 q.quality = int(out.get("score", 3))
                 return 0 if "score" in out else 1
-            except Exception:  # noqa: BLE001
+            except (ValueError, TypeError):  # non-numeric score
                 q.quality = 3
                 return 1
 

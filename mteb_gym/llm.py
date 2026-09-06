@@ -8,7 +8,6 @@ import hashlib
 import json
 import os
 import re
-import time
 
 
 class MockLLM:
@@ -46,28 +45,24 @@ class LLM:
     ):
         from openai import OpenAI
 
-        # timeout: a hung call would otherwise stall a pool worker forever
+        # The SDK retries connection errors, timeouts, 429 and 5xx with backoff. Anything else
+        # (bad key, unknown model) raises at once. timeout: a hung call would otherwise stall a worker forever.
         self.client = OpenAI(
-            base_url=base_url, api_key=api_key or os.environ.get("OPENAI_API_KEY", "EMPTY"), timeout=timeout
+            base_url=base_url,
+            api_key=api_key or os.environ.get("OPENAI_API_KEY", "EMPTY"),
+            timeout=timeout,
+            max_retries=max_retries,
         )
         self.model = model
         self.max_tokens = max_tokens
-        self.max_retries = max_retries
         self.extra_body = extra_body  # server knobs, e.g. {"chat_template_kwargs": {"enable_thinking": False}}
 
     def chat(self, messages: list[dict], temperature: float = 0.0) -> str:
-        for attempt in range(self.max_retries):
-            try:
-                resp = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=self.max_tokens,
-                    extra_body=self.extra_body,
-                )
-                return resp.choices[0].message.content or ""
-            except Exception:  # noqa: BLE001 - transient API errors
-                if attempt == self.max_retries - 1:
-                    raise
-                time.sleep(2**attempt)
-        return ""
+        resp = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=self.max_tokens,
+            extra_body=self.extra_body,
+        )
+        return resp.choices[0].message.content or ""

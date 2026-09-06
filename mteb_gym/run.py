@@ -131,7 +131,7 @@ def run(
 ) -> Result:
     """Rank `models` on `corpus` (an mteb task name or a local path) with an LLM judge.
 
-    `judge` and `generator` are clients from mteb_gym.llm. `queries`: "synthetic" (the
+    `judge` and `generator` are LLM clients (mteb_gym.LLM or MockLLM). `queries`: "synthetic" (the
     generator writes them; defaults to the judge), "original" (the queries and labels the
     dataset came with, for validation), or your own as a path / list. `task_description` is
     one sentence on what counts as a good result, given to generator and judge; by

@@ -1,4 +1,6 @@
-"""LLM clients. A client implements chat(messages, temperature=0.0) -> str."""
+"""LLM clients: LLM for any OpenAI-compatible /chat/completions endpoint (vLLM, Ollama,
+OpenAI, Together, OpenRouter, and the compatible endpoints of Anthropic and Gemini),
+MockLLM for tests and dry runs. A client implements chat(messages, temperature=0.0) -> str."""
 
 from __future__ import annotations
 
@@ -9,16 +11,7 @@ import re
 import time
 
 
-def llm(model: str, base_url: str | None = None, api_key: str | None = None, **kwargs):
-    """Client for `model` on an OpenAI-compatible /chat/completions endpoint: vLLM,
-    Ollama, OpenAI, Together, OpenRouter, and the compatible endpoints of Anthropic
-    and Gemini. "mock" is the deterministic test client (no network)."""
-    if model == "mock":
-        return MockClient(**kwargs)
-    return OpenAICompatClient(model, base_url=base_url, api_key=api_key, **kwargs)
-
-
-class MockClient:
+class MockLLM:
     """Deterministic stand-in for tests and dry runs: same input, same output."""
 
     model = "mock"
@@ -40,7 +33,7 @@ class MockClient:
         return json.dumps({"query": "what is known about " + (" ".join(words) or f"topic {h % 1000}")})
 
 
-class OpenAICompatClient:
+class LLM:
     def __init__(
         self,
         model: str,

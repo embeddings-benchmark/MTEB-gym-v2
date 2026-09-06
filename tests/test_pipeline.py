@@ -58,6 +58,15 @@ def test_query_generation():
             (q.qid, q.text, tuple(q.seed_doc_ids)) for q in seq
         ]
 
+    # a dead endpoint raises with the client's own error instead of yielding 0 queries
+    class Dead(MockLLM):
+        def chat(self, messages, temperature=0.0):
+            raise ConnectionError("refused")
+
+    for workers in (1, 4):
+        with pytest.raises(ConnectionError):
+            gen_with(workers, Dead())
+
 
 def test_judge():
     queries = [Query(f"q{i}", f"query {i} about statins", ["D0"]) for i in range(30)]

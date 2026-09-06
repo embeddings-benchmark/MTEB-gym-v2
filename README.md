@@ -51,6 +51,8 @@ print(result.leaderboard)
 
 **Task description.** One sentence on what counts as a good result, given to the generator and the judge, for example `"Given a claim, find documents that refute it"`. For an MTEB task it defaults to the task's own prompt.
 
+The example talks to two vLLM servers you run yourself. The gym itself needs no GPU, and any hosted OpenAI-compatible endpoint works in their place.
+
 ```python
 result = gym.run(
     corpus="NFCorpus",

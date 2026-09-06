@@ -57,7 +57,8 @@ def _cached_queries(path: Path, gen: QueryGenerator, docs: dict[str, str]) -> tu
     queries = gen.run(docs)
     if not queries:
         raise RuntimeError(
-            "query generation returned 0 queries: the generator endpoint is likely dead or the filter rejected everything"
+            "query generation kept 0 queries: the generator's answers were not parseable JSON, "
+            "or the filter rejected all of them (see the log)"
         )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"n_generated": gen.n_generated, "queries": [asdict(q) for q in queries]}, indent=2))

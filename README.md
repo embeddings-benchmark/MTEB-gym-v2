@@ -8,7 +8,7 @@ MTEB Gym takes an unlabeled corpus, generates synthetic queries, retrieves docum
 corpus → synthetic queries → retrieval → pairwise LLM judging → model ranking
 ```
 
-The goal is simple: **given a new corpus with no relevance labels, which embedding model should you use?**
+**Given a new corpus with no relevance labels, which embedding model should you use?**
 
 MTEB Gym originated from the [MTEB Gym discussion](https://github.com/embeddings-benchmark/mteb/discussions/3068).
 
@@ -37,7 +37,7 @@ result = gym.run(
 print(result.leaderboard)
 ```
 
-**Real run.** Any MTEB retrieval task or a directory / .jsonl of your own documents, MTEB model ids, and an LLM judge and a generator from different model families. LLMs are addressed by model id and an OpenAI-compatible endpoint: a local vLLM or Ollama server, OpenAI, Together, OpenRouter, or the compatible endpoints of Anthropic and Gemini.
+**Real run.** Any MTEB retrieval task or a directory / .jsonl of your own documents, MTEB model ids, and an LLM judge and a generator from different model families. LLMs are addressed by model id and an OpenAI-compatible endpoint, whether a local vLLM server or a provider API (Anthropic and Gemini expose compatible endpoints).
 
 ```python
 result = gym.run(
@@ -78,24 +78,20 @@ Models run through mteb itself (`mteb.evaluate` on a task the gym builds from th
    Pairwise outcomes are aggregated with Bradley–Terry to produce the leaderboard. Uncertainty is estimated by resampling queries.
 
 6. **Record the run**  
-   Queries, mteb's retrieval predictions, judge verdicts, model revisions, the resolved configuration, and the Git revision are persisted. Every stage is cached by content, so a rerun repeats only what changed and a reported ranking can be reproduced offline without new LLM calls.
+   Queries, mteb's retrieval predictions, judge verdicts, model revisions, the resolved configuration, and the Git revision are persisted. Every stage is cached by identity (dataset and model revisions, judge and prompt), so a rerun repeats only what changed and a reported ranking can be reproduced offline without new LLM calls.
 
 ## Validation against MTEB
 
-When human-labeled MTEB results exist, they can be used **after** a Gym run to measure how closely the label-free ranking matches the official ranking.
-
-The official labels are never exposed to the Gym pipeline itself.
+For an MTEB task, the ranking can be compared with the official scores after a run; the labels never enter the pipeline.
 
 ```python
 from mteb_gym import rank_agreement
 
 agreement = rank_agreement("results/")  # official scores from the MTEB results repository
-agreement = rank_agreement("results/", evaluate_missing=True)  # also run mteb on the real task for models without one
+agreement = rank_agreement("results/", evaluate_missing=True)  # also evaluate models that have no official result
 ```
 
-Official scores come from the MTEB results repository through mteb's result cache; models without one are skipped unless `evaluate_missing=True`, in which case mteb evaluates them on the real task and stores the result in that cache. The output records per model whether its anchor was official or self-run, and reports Spearman, Kendall, top-10 Spearman and AP correlation with bootstrap intervals.
-
-For a genuinely unlabeled corpus, validation is optional — the Gym leaderboard itself is the output.
+Official scores come from the MTEB results repository through mteb's result cache. Models without one are skipped unless `evaluate_missing=True`, which runs mteb on the real task and stores the result in that cache. The output records whether each anchor was official or self-run, with Spearman, Kendall, top-10 Spearman and AP correlation and bootstrap intervals.
 
 ## Architecture
 

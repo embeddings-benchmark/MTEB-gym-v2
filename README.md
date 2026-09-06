@@ -81,6 +81,10 @@ results/nfcorpus/
 
 A rerun of the same configuration reuses all of it and makes no LLM calls. Read a run back with `gym.Result.from_disk(path)` (`.leaderboard`, `.to_dataframe()`), or every run under a directory with `gym.load_results("results/")`.
 
+**Cost.** Judging makes 2 calls per query per model pair (both presentation orders): 100 queries and 10 models is 9,000 judge calls, plus about 1.6 generator calls per kept query. A rerun with one model added judges only the new pairs.
+
+**Other arguments.** `top_k` (documents judged per query, 10), `seed`, `filter_queries` (LLM quality filter and deduplication, on by default), `batch_size` for encoding, `workers` for concurrent LLM calls.
+
 ## How it works
 
 1. **Generate queries**  

@@ -15,10 +15,10 @@ MTEB Gym originated from the [MTEB Gym discussion](https://github.com/embeddings
 ## Installation
 
 ```bash
-pip install "mteb-gym[retrieval] @ git+https://github.com/embeddings-benchmark/MTEB-gym-v2"
+pip install "mteb-gym @ git+https://github.com/embeddings-benchmark/MTEB-gym-v2"
 ```
 
-`retrieval` brings mteb, sentence-transformers, torch and BM25. Add `openai` and/or `claude` for real judges (`[retrieval,openai]`).
+Add `[openai]` and/or `[claude]` for a real judge, `[colbert]` for late-interaction models.
 
 ## Quickstart
 
@@ -116,7 +116,7 @@ mteb_gym/
 ## Development
 
 ```bash
-make install     # uv sync with the retrieval extra and dev tools
+make install     # uv sync with the dev tools
 make test        # pytest; the end-to-end test runs when mteb is installed
 make lint        # ruff format + check
 ```

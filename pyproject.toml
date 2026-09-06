@@ -8,17 +8,12 @@ version = "0.3.0"
 description = "Label-free, LLM-judged model selection for embedding models, built on mteb"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["numpy", "scipy"]
+dependencies = ["mteb[bm25s]>=2.0"]   # mteb brings torch, sentence-transformers, datasets, numpy, scipy
 
 [project.optional-dependencies]
-# running models: mteb loads them; bm25s/PyStemmer for the BM25 baseline
-retrieval = ["mteb>=2.0", "sentence-transformers>=2.7", "torch", "bm25s", "PyStemmer"]
-colbert = ["pylate"]
-# judge / generator backends
-claude = ["anthropic>=0.40"]
-openai = ["openai>=1.40"]   # also vLLM, Together and any /chat/completions server
-full = ["mteb>=2.0", "sentence-transformers>=2.7", "torch", "bm25s", "PyStemmer", "pylate",
-        "anthropic>=0.40", "openai>=1.40"]
+openai = ["openai>=1.40"]     # judge / generator on any /chat/completions endpoint (vLLM, OpenAI, Together)
+claude = ["anthropic>=0.40"]  # judge / generator on the Anthropic API
+colbert = ["mteb[pylate]>=2.0"]
 
 [project.scripts]
 mteb-gym = "mteb_gym.__main__:main"

@@ -1,5 +1,5 @@
 install:
-	uv sync --extra retrieval --group dev --frozen
+	uv sync --group dev --frozen
 
 lint:
 	uv run --no-sync ruff format .

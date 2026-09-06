@@ -5,7 +5,11 @@ from __future__ import annotations
 import argparse
 import logging
 
-from . import llm, run
+from . import LLM, MockLLM, run
+
+
+def client(model: str, base_url: str | None):
+    return MockLLM() if model == "mock" else LLM(model, base_url=base_url)
 
 
 def main(argv=None) -> None:
@@ -39,8 +43,8 @@ def main(argv=None) -> None:
     result = run(
         args.corpus,
         args.models,
-        llm(args.judge, base_url=args.judge_url),
-        llm(args.generator, base_url=args.generator_url) if args.generator else None,
+        client(args.judge, args.judge_url),
+        client(args.generator, args.generator_url) if args.generator else None,
         queries=args.queries,
         task_description=args.task_description,
         n_queries=args.n_queries,

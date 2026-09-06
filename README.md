@@ -22,43 +22,18 @@ Add `[colbert]` for late-interaction models.
 
 ## Quickstart
 
-**Dry run: no API key, no GPU, about a minute on CPU.** The mock judge answers deterministically, so this checks that everything is installed and wired up; it does not rank models.
+```bash
+export OPENAI_API_KEY=<your_api_key>   # or any OpenAI-compatible provider, see LLMs below
+```
 
 ```python
 import mteb_gym as gym
 
 result = gym.run(
-    corpus="NanoNFCorpusRetrieval",
-    models=["mteb/baseline-bm25s", "sentence-transformers/all-MiniLM-L6-v2"],
-    judge=gym.MockLLM(),
-    n_queries=20,
-    output_folder="results/demo",
-)
-print(result.leaderboard)
-```
-
-## Usage
-
-`gym.run` needs three things: a corpus, the models to rank, and an LLM judge.
-
-**Corpus.** An MTEB retrieval task name such as `"NFCorpus"`, or a path to your own documents: a directory of `.txt` / `.md` files, or a `.jsonl` with `id` and `text` fields.
-
-**Models.** MTEB model ids, such as `"BAAI/bge-base-en-v1.5"` or `"mteb/baseline-bm25s"`. They run through mteb itself, so prompts, revisions, similarity functions and sparse / late-interaction paths are exactly those of an official MTEB run.
-
-**LLMs.** `gym.LLM(model, base_url=...)` addresses any OpenAI-compatible endpoint: a local vLLM or Ollama server, OpenAI, Together, OpenRouter, or the compatible endpoints of Anthropic and Gemini. `api_key` defaults to `OPENAI_API_KEY`. Use a judge and a generator from different model families.
-
-**Queries.** By default the generator writes `n_queries` queries from the corpus. If you already have queries, pass them instead: `queries="queries.jsonl"` (`id` and `text` fields), a `.txt` with one query per line, or a list of strings. For an MTEB task, `queries="original"` runs the queries the dataset came with.
-
-**Task description.** One sentence on what counts as a good result, given to the generator and the judge, for example `"Given a claim, find documents that refute it"`. For an MTEB task it defaults to the task's own prompt.
-
-The example talks to two vLLM servers you run yourself. The gym itself needs no GPU, and any hosted OpenAI-compatible endpoint works in their place.
-
-```python
-result = gym.run(
     corpus="NFCorpus",
     models=["mteb/baseline-bm25s", "BAAI/bge-base-en-v1.5", "intfloat/e5-base-v2"],
-    judge=gym.LLM("Qwen/Qwen3-8B", base_url="http://localhost:8000/v1"),
-    generator=gym.LLM("MiniMaxAI/MiniMax-M2", base_url="http://localhost:8001/v1"),
+    generator=gym.LLM("gpt-5"),  # writes the queries
+    judge=gym.LLM("gpt-5-mini"),  # compares what the models retrieve
     n_queries=100,
     output_folder="results/nfcorpus",
 )
@@ -68,17 +43,33 @@ print(result.leaderboard)
 Or from the shell:
 
 ```bash
-mteb-gym --corpus NFCorpus --models mteb/baseline-bm25s BAAI/bge-base-en-v1.5 --judge Qwen/Qwen3-8B --judge-url http://localhost:8000/v1
+mteb-gym --corpus NFCorpus --models mteb/baseline-bm25s BAAI/bge-base-en-v1.5 intfloat/e5-base-v2 --generator gpt-5 --judge gpt-5-mini
 ```
+
+This prints the leaderboard and saves the run under `output_folder`: the generated queries, each model's retrieval, every judge verdict, and a record with ratings and confidence intervals.
+
+## Usage
+
+`gym.run` takes a corpus, the models to rank, and two LLMs: a generator that writes the queries and a judge that compares the retrieved results. The generator is used only for synthetic queries. Without one, the judge writes the queries too.
+
+**Corpus.** An MTEB retrieval task name such as `"NFCorpus"`, or a path to your own documents: a directory of `.txt` / `.md` files, or a `.jsonl` with `id` and `text` fields.
+
+**Models.** MTEB model ids, such as `"BAAI/bge-base-en-v1.5"` or `"mteb/baseline-bm25s"`. They run through mteb itself, so prompts, revisions, similarity functions and sparse / late-interaction paths are exactly those of an official MTEB run.
+
+**LLMs.** `gym.LLM(model)` talks to OpenAI and reads `OPENAI_API_KEY`, and `OPENAI_BASE_URL` if set, like the openai SDK. `gym.LLM(model, base_url=..., api_key=...)` addresses any other OpenAI-compatible endpoint: a vLLM or Ollama server you run, Together, OpenRouter, or the compatible endpoints of Anthropic and Gemini. The gym itself needs no GPU. For an experiment, take the judge and the generator from different model families.
+
+**Queries.** By default the generator writes `n_queries` queries from the corpus. If you already have queries, pass them instead: `queries="queries.jsonl"` (`id` and `text` fields), a `.txt` with one query per line, or a list of strings. For an MTEB task, `queries="original"` runs the queries the dataset came with.
+
+**Task description.** One sentence on what counts as a good result, given to the generator and the judge, for example `"Given a claim, find documents that refute it"`. For an MTEB task it defaults to the task's own prompt.
 
 **Output.** Everything lands under `output_folder`:
 
 ```text
 results/nfcorpus/
-├── records/NFCorpus__Qwen3-8B__MiniMax-M2__q100-s0-<hash>.json   # the run: ratings, config, diagnostics
-├── queries/                                                        # generated queries with quality scores
-├── predictions/                                                    # mteb's retrieval output per model
-└── verdicts/                                                       # judge verdicts per model pair, with reasoning
+├── records/NFCorpus__gpt-5-mini__gpt-5__q100-s0-<hash>.json   # the run: ratings, config, diagnostics
+├── queries/                                                     # generated queries with quality scores
+├── predictions/                                                 # mteb's retrieval output per model
+└── verdicts/                                                    # judge verdicts per model pair, with reasoning
 ```
 
 A rerun of the same configuration reuses all of it and makes no LLM calls. Read a run back with `gym.Result.from_disk(path)` (`.leaderboard`, `.to_dataframe()`), or every run under a directory with `gym.load_results("results/")`.
@@ -143,7 +134,7 @@ make test        # pytest, including two end-to-end runs (a local corpus and a N
 make lint        # ruff format + check
 ```
 
-Tests use the mock LLM: no API key, no GPU. The end-to-end runs download a small MTEB task and MiniLM once. CI runs the suite on Python 3.10 and 3.13.
+Tests run the pipeline end to end with `gym.MockLLM()`, a deterministic stand-in: no API key, no GPU. The end-to-end runs download a small MTEB task and MiniLM once. CI runs the suite on Python 3.10 and 3.13.
 
 ## Citation
 

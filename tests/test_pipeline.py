@@ -321,6 +321,7 @@ def test_end_to_end_local_corpus():
         )  # local corpus: no task prompt
         assert rec["source"] == "local" and rec["corpus_id"].startswith("local:docs@")
         assert rec["llms"]["judge"]["model"] == "mock" and rec["llms"]["generator"]["model"] == "mock"
+        assert rec["labels"] == "seed_documents" and all(0 <= r["ndcg_at_10"] <= 1 for r in rec["ratings"])
         assert all(
             r["revision"] == mteb.get_model_meta(r["model"]).revision for r in rec["ratings"]
         )  # mteb's pins carried over
@@ -332,6 +333,7 @@ def test_end_to_end_local_corpus():
         assert calls["n"] == 0 and again.record == rec and again.path == res.path
         own = run(docs, queries=["statins and heart disease", "fiber and the gut", "vitamin D for asthma"], **kw)
         assert own.record["config"]["arm"] == "own" and own.record["config"]["n_queries"] == 3
+        assert own.record["labels"] is None and all(r["ndcg_at_10"] is None for r in own.record["ratings"])
         df = load_results(Path(tmp) / "out").to_dataframe()
         assert len(df) == 4 and set(df["arm"]) == {"synthetic", "own"}
 

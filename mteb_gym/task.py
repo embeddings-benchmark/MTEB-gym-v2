@@ -11,6 +11,15 @@ from .corpus import Corpus
 from .queries import Query
 
 
+def labels(corpus: Corpus, queries: list[Query] | None) -> dict[str, dict[str, int]] | None:
+    """What a run can be scored against without a judge: the dataset's own qrels for its own
+    queries, each synthetic query's seed documents, nothing for queries you supplied."""
+    if queries is None:
+        return corpus.qrels
+    qrels = {q.qid: {d: 1 for d in q.seed_doc_ids} for q in queries if q.seed_doc_ids}
+    return qrels or None
+
+
 def build(corpus: Corpus, queries: list[Query] | None):
     """An mteb AbsTaskRetrieval over `corpus`. `queries=None` uses the task's own
     queries and qrels."""

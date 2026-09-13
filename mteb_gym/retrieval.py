@@ -63,3 +63,11 @@ def top_k(path: Path, corpus: Corpus, queries: dict[str, str], k: int) -> list[R
         ids = sorted(scores, key=scores.get, reverse=True)[:k]
         out.append(Ranked(qid, text, ids, [corpus.docs[d] for d in ids]))
     return out
+
+
+def ndcg_at_10(path: Path, qrels: dict[str, dict[str, int]]) -> float:
+    """mteb's own nDCG@10 of the prediction file against `qrels`."""
+    from mteb._evaluators.retrieval_metrics import calculate_retrieval_scores
+
+    hits = json.loads(path.read_text())["default"]["test"]
+    return float(calculate_retrieval_scores(hits, qrels, [10]).ndcg["NDCG@10"])

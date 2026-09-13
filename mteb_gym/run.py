@@ -15,6 +15,7 @@ import hashlib
 import itertools
 import json
 import logging
+import random
 import threading
 import time
 from dataclasses import asdict
@@ -88,25 +89,36 @@ def verdict_key(judge: Judge, top_k: int, query_set: str, a: str, rev_a: str | N
     )
 
 
+def pair_subset(n_pairs: int, qids: list[str], k: int | None, seed: int) -> dict[str, set[int]] | None:
+    """For each query, the indices of the `k` model pairs to judge, drawn once with `seed`.
+    Bradley-Terry ranks from incomplete comparisons, so this cuts judging cost by n_pairs / k."""
+    if k is None or k >= n_pairs:
+        return None
+    rng = random.Random(seed)
+    return {qid: set(rng.sample(range(n_pairs), k)) for qid in qids}
+
+
 def judge_pair_cached(
     vdir: Path, judge: Judge, a: str, b: str, ra: list[Ranked], rb: list[Ranked], key: str
 ) -> list[Verdict]:
-    """Verdicts for one pair under `key`; streamed to JSONL as they complete so a crash resumes."""
+    """Verdicts for one pair under `key`, for the queries in `ra`. Every verdict ever made for the
+    pair stays on disk (a JSONL while judging, a JSON when the batch completes), so a crash, a rerun,
+    or a run over a subset of queries judges only what is missing."""
     path = vdir / f"{slug(a)}__{slug(b)}-{key}.json"
-    if path.exists():
-        return [Verdict(**v) for v in json.loads(path.read_text())]
-    vdir.mkdir(parents=True, exist_ok=True)
     jsonl = path.with_suffix(".jsonl")
     done: dict[str, Verdict] = {}
+    if path.exists():
+        done.update({v.qid: v for v in (Verdict(**x) for x in json.loads(path.read_text()))})
     if jsonl.exists():
         for line in jsonl.read_text().splitlines():
             if line.strip():
                 v = Verdict(**json.loads(line))
                 done[v.qid] = v
-        if done:
-            logger.info("%s vs %s: resuming, %d verdicts on disk", a, b, len(done))
     todo = [r for r in ra if r.qid not in done]
     if todo:
+        if done:
+            logger.info("%s vs %s: %d verdicts on disk, judging %d more", a, b, len(done), len(todo))
+        vdir.mkdir(parents=True, exist_ok=True)
         lock = threading.Lock()
 
         def persist(v: Verdict) -> None:
@@ -114,10 +126,9 @@ def judge_pair_cached(
                 f.write(json.dumps(asdict(v)) + "\n")
 
         done.update({v.qid: v for v in judge.judge_all(todo, rb, a, b, on_verdict=persist)})
+        path.write_text(json.dumps([asdict(v) for v in done.values()], indent=2))
     order = {r.qid: i for i, r in enumerate(ra)}
-    verdicts = sorted(done.values(), key=lambda v: order.get(v.qid, 1 << 30))
-    path.write_text(json.dumps([asdict(v) for v in verdicts], indent=2))
-    return verdicts
+    return sorted((v for v in done.values() if v.qid in order), key=lambda v: order[v.qid])
 
 
 def run(
@@ -131,6 +142,7 @@ def run(
     n_queries: int = 100,
     top_k: int = 10,
     doc_chars: int = 2000,
+    pairs_per_query: int | None = None,
     seed: int = 0,
     filter_queries: bool = True,
     output_folder: str | Path = "results",
@@ -151,6 +163,7 @@ def run(
         n_queries: Queries to generate.
         top_k: Documents judged per query.
         doc_chars: Characters of each document shown to the judge; longer documents are cut and marked.
+        pairs_per_query: Judge only this many random model pairs per query; all pairs by default.
         seed: Seed for document sampling and the bootstrap.
         filter_queries: LLM quality filter and deduplication of generated queries.
         output_folder: Where queries, predictions, verdicts and the record are written.
@@ -202,11 +215,18 @@ def run(
         ranked[m] = retrieval.top_k(retrieval.predict(m, gym_task, folder, batch_size=batch_size), corp, texts, top_k)
 
     jd = Judge(judge, instruction=description, workers=workers, doc_chars=doc_chars)
+    jd = Judge(judge, instruction=description, workers=workers)
+    pairs = list(itertools.combinations(models, 2))
+    chosen = pair_subset(len(pairs), list(texts), pairs_per_query, seed)  # None: every pair for every query
     verdicts: list[Verdict] = []
-    for i, (a, b) in enumerate(itertools.combinations(models, 2), 1):
-        logger.info("pair %d/%d: %s vs %s", i, len(models) * (len(models) - 1) // 2, a, b)
+    for i, (a, b) in enumerate(pairs):
+        logger.info("pair %d/%d: %s vs %s", i + 1, len(pairs), a, b)
         key = verdict_key(jd, top_k, query_set, a, revisions[a], b, revisions[b])
-        verdicts.extend(judge_pair_cached(out / "verdicts", jd, a, b, ranked[a], ranked[b], key))
+        ra, rb = ranked[a], ranked[b]
+        if chosen is not None:
+            ra = [r for r in ra if i in chosen[r.qid]]
+            rb = [r for r in rb if i in chosen[r.qid]]
+        verdicts.extend(judge_pair_cached(out / "verdicts", jd, a, b, ra, rb, key))
 
     ratings = rate(verdicts, seed=seed)
     experiment = {
@@ -222,6 +242,7 @@ def run(
         "n_queries": len(texts),
         "top_k": top_k,
         "doc_chars": doc_chars,
+        "pairs_per_query": pairs_per_query,
         "seed": seed,
         **({f"gen_{k}": v for k, v in gen.params.items()} if arm == "synthetic" else {}),
         "models": models,

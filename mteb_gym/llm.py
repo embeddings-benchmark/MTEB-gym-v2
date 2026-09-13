@@ -64,7 +64,7 @@ class LLM:
         self.extra_body = extra_body  # server knobs, e.g. {"chat_template_kwargs": {"enable_thinking": False}}
         self._rejected: set[str] = set()  # sampling parameters this model refused
         self.sent: dict = {}  # parameters actually sent on the last call, for the record
-        self.served: str | None = None  # the model string the server reported, e.g. a dated snapshot
+        self.served_model: str | None = None  # the model string the server reported, e.g. a dated snapshot
 
     def chat(self, messages: list[dict], temperature: float = 0.0) -> str:
         params = {"temperature": temperature}
@@ -77,7 +77,7 @@ class LLM:
                     model=self.model, messages=messages, extra_body=self.extra_body, **sent
                 )
                 self.sent = {**sent, **(self.extra_body or {})}
-                self.served = getattr(resp, "model", None) or self.served
+                self.served_model = getattr(resp, "model", None) or self.served_model
                 return resp.choices[0].message.content or ""
             except Exception as e:  # noqa: BLE001
                 # Some models refuse a parameter and answer 400 naming it: models that always reason take

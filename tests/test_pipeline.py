@@ -74,13 +74,16 @@ def test_llm_drops_rejected_params():
             for k in ("temperature", "max_completion_tokens"):
                 if k in kw:
                     raise Refused(f"Unsupported parameter: '{k}' is not supported with this model.")
-            return types.SimpleNamespace(choices=[types.SimpleNamespace(message=types.SimpleNamespace(content="ok"))])
+            return types.SimpleNamespace(
+                model="m-2026-01-01", choices=[types.SimpleNamespace(message=types.SimpleNamespace(content="ok"))]
+            )
 
     llm = LLM("m", api_key="x", max_tokens=512)
     llm.client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=Completions()))
     assert llm.chat([{"role": "user", "content": "hi"}]) == "ok"
     assert llm.chat([{"role": "user", "content": "hi"}]) == "ok"
     assert calls == [["max_completion_tokens", "temperature"], ["max_completion_tokens"], [], []]  # learned once
+    assert llm.served == "m-2026-01-01" and llm.sent == {}  # both refused: the record shows neither
 
 
 def test_judge():
@@ -312,6 +315,7 @@ def test_end_to_end_local_corpus():
             rec["config"]["n_queries"] == 4 and rec["config"]["task_description"] is None
         )  # local corpus: no task prompt
         assert rec["source"] == "local" and rec["corpus_id"].startswith("local:docs@")
+        assert rec["llms"]["judge"]["model"] == "mock" and rec["llms"]["generator"]["model"] == "mock"
         assert all(
             r["revision"] == mteb.get_model_meta(r["model"]).revision for r in rec["ratings"]
         )  # mteb's pins carried over

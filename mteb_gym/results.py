@@ -81,7 +81,13 @@ def verdict_diagnostics(verdicts: list[Any]) -> dict[str, Any]:
 
 
 def build_record(
-    corpus, experiment, ratings, verdicts, evaluation_time: float, revisions: dict[str, str | None]
+    corpus,
+    experiment,
+    ratings,
+    verdicts,
+    evaluation_time: float,
+    revisions: dict[str, str | None],
+    llms: dict | None = None,
 ) -> dict:
     dataset = getattr(corpus.metadata, "dataset", None) or {}
     return {
@@ -94,6 +100,7 @@ def build_record(
         "gym_revision": git_revision(),
         "evaluation_time": float(evaluation_time),
         "config": experiment,
+        "llms": llms,  # what the judge and generator actually ran with; informational, not identity
         "diagnostics": verdict_diagnostics(verdicts),
         "ratings": [
             {

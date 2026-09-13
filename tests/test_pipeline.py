@@ -83,7 +83,7 @@ def test_llm_drops_rejected_params():
     assert llm.chat([{"role": "user", "content": "hi"}]) == "ok"
     assert llm.chat([{"role": "user", "content": "hi"}]) == "ok"
     assert calls == [["max_completion_tokens", "temperature"], ["max_completion_tokens"], [], []]  # learned once
-    assert llm.served == "m-2026-01-01" and llm.sent == {}  # both refused: the record shows neither
+    assert llm.served_model == "m-2026-01-01" and llm.sent == {}  # both refused: the record shows neither
 
 
 def test_judge():

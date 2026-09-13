@@ -91,10 +91,12 @@ class LLM:
 
 
 def llm_settings(client) -> dict:
-    """What an LLM client actually ran with: the model asked for, the model the server reported,
-    and the parameters sent on its last call. A refused parameter is simply absent."""
+    """What an LLM client actually ran with: the model asked for, the endpoint, the model the server
+    reported, and the parameters sent on its last call. A refused parameter is simply absent."""
+    base_url = getattr(getattr(client, "client", None), "base_url", None)
     return {
         "model": getattr(client, "model", str(client)),
-        "served": getattr(client, "served", None),
+        "base_url": str(base_url) if base_url else None,
+        "served_model": getattr(client, "served_model", None),
         **getattr(client, "sent", {}),
     }

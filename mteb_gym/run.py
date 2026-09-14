@@ -171,7 +171,7 @@ def run(
         query_set = f"{slug(corp.id)}-{slug(_model_id(gen_client))}-{_sha(sorted(gen.params.items()))}"
         qs, n_generated = _cached_queries(out / "queries" / f"{query_set}.json", gen, corp.docs)
         texts, arm = {q.qid: q.text for q in qs}, "synthetic"
-        generator_settings = llm_settings(gen_client)  # before the judge, which may be the same client, runs
+        generator_settings = gen.settings or llm_settings(gen_client)  # cached queries: only the client is known
     elif queries == "original":
         if not corp.queries:
             raise ValueError(f"{corp.name} has no queries of its own")

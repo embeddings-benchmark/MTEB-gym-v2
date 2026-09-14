@@ -14,11 +14,34 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+def official_result(cache, task: str, meta):
+    """The official result for `meta` on `task` and the revision folder it came from.
+    mteb looks only under the model's pinned revision. The results repository also files
+    author-submitted results under "external" and older runs under other revisions, so when the
+    pinned folder has nothing, take "external", else the first other folder that has the task."""
+    result = cache.load_task_result(task, meta)
+    if result is not None:
+        return result, meta.revision
+    roots = [cache.cache_path / "results"] + ([cache.remote_results_path] if cache.has_remote else [])
+    folders = sorted(
+        {
+            p.name
+            for root in roots
+            for p in (root / meta.model_name_as_path()).glob("*")
+            if (p / f"{task}.json").exists()
+        }
+    )
+    if not folders:
+        return None, None
+    revision = "external" if "external" in folders else folders[0]
+    return cache.load_task_result(task, meta.name, model_revision=revision), revision
+
+
 def fetch_truth(
     models: list[str], task: str, *, evaluate_missing: bool = False
-) -> tuple[dict[str, float], dict[str, str]]:
-    """Official main score (nDCG@10, x100) per model on `task`, and per model whether
-    it was "official" or "self-run"."""
+) -> tuple[dict[str, float], dict[str, dict]]:
+    """Official main score (nDCG@10, x100) per model on `task`, and per model where it came from:
+    {"kind": "official" | "self-run", "revision": the results folder used}."""
     import mteb
 
     cache = mteb.ResultCache()
@@ -28,17 +51,25 @@ def fetch_truth(
         logger.warning("could not refresh the MTEB results cache; using the local copy")
     task_obj = mteb.get_task(task)
     scores: dict[str, float] = {}
-    source: dict[str, str] = {}
+    source: dict[str, dict] = {}
     for name in models:
         meta = mteb.get_model_meta(name)
-        result = cache.load_task_result(task, meta)
+        result, revision = official_result(cache, task, meta)
         if result is not None:
-            source[name] = "official"
+            source[name] = {"kind": "official", "revision": revision}
+            if revision != meta.revision:
+                logger.info(
+                    "%s on %s: official result is under revision %s, not the pinned %s",
+                    name,
+                    task,
+                    revision,
+                    meta.revision,
+                )
         elif evaluate_missing:
             logger.info("no official result for %s on %s; evaluating with mteb", name, task)
             res = mteb.evaluate(meta, task_obj, cache=cache, overwrite_strategy="only-missing", show_progress_bar=False)
             result = res.task_results[0] if res.task_results else None
-            source[name] = "self-run"
+            source[name] = {"kind": "self-run", "revision": meta.revision}
         if result is None:
             logger.warning("no official result for %s on %s; skipped (evaluate_missing=True to run it)", name, task)
             continue

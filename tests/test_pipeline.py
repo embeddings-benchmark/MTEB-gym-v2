@@ -257,7 +257,7 @@ def test_agreement():
     original = agreement.fetch_truth
     agreement.fetch_truth = lambda models, task, **kw: (
         {"model_a": 30.0, "model_b": 20.0, "model_c": 10.0},
-        {m: "official" for m in models},
+        {m: {"kind": "official", "revision": "r1"} for m in models},
     )
     try:
         with tempfile.TemporaryDirectory() as tmp:
@@ -275,7 +275,7 @@ def test_agreement():
             agr = res.agreement(bootstrap=100, seed=0)
             assert agr["spearman_rho"] == 1.0 and agr["kendall_tau"] == 1.0
             assert Result.from_disk(res.path).record["agreement"]["truth_source"] == {
-                m: "official" for m in ("model_a", "model_b", "model_c")
+                m: {"kind": "official", "revision": "r1"} for m in ("model_a", "model_b", "model_c")
             }
             assert load_results(tmp).agreement(bootstrap=10)[str(res.path)]["spearman_rho"] == 1.0
             assert (
@@ -285,6 +285,30 @@ def test_agreement():
             )
     finally:
         agreement.fetch_truth = original
+
+
+def test_official_result_falls_back_to_other_revisions():
+    """The results repository files many models' scores under "external" or an older revision,
+    not under the revision mteb pins; the lookup must find those too."""
+    mteb = pytest.importorskip("mteb")
+    from mteb.results import TaskResult
+
+    meta = mteb.get_model_meta("BAAI/bge-base-en-v1.5")
+    with tempfile.TemporaryDirectory() as tmp:
+        cache = mteb.ResultCache(cache_path=tmp)  # no remote clone under a fresh path
+        folder = Path(tmp) / "results" / meta.model_name_as_path() / "external"
+        folder.mkdir(parents=True)
+        TaskResult(
+            task_name="NFCorpus",
+            dataset_revision="x",
+            mteb_version="0",
+            evaluation_time=1.0,
+            scores={"test": [{"main_score": 0.4, "hf_subset": "default", "languages": ["eng-Latn"]}]},
+        ).to_disk(folder / "NFCorpus.json")
+        assert cache.load_task_result("NFCorpus", meta) is None  # mteb alone: pinned folder only
+        result, revision = agreement.official_result(cache, "NFCorpus", meta)
+        assert revision == "external" and result.get_score() == 0.4
+        assert agreement.official_result(cache, "SciFact", meta) == (None, None)
 
 
 def test_end_to_end_local_corpus():

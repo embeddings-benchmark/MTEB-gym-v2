@@ -17,8 +17,9 @@ logger = logging.getLogger(__name__)
 def fetch_truth(
     models: list[str], task: str, *, evaluate_missing: bool = False
 ) -> tuple[dict[str, float], dict[str, str]]:
-    """Official main score (nDCG@10, x100) per model on `task`, and per model whether
-    it was "official" or "self-run"."""
+    """Official main score (nDCG@10, x100) per model on `task`, and per model whether it
+    was "official" (the model's pinned revision), "official@<revision>" (another revision
+    the results repository holds) or "self-run"."""
     import mteb
 
     cache = mteb.ResultCache()
@@ -27,6 +28,24 @@ def fetch_truth(
     except Exception:  # noqa: BLE001 - offline: use the local copy
         logger.warning("could not refresh the MTEB results cache; using the local copy")
     task_obj = mteb.get_task(task)
+
+    # Results are filed per model revision, and the revision mteb's registry pins is
+    # often not the one the results repository holds: author-reported numbers sit under
+    # "external", and earlier runs under a previous pin. Matching the pinned revision
+    # alone silently drops most anchors, so keep every revision the repository has and
+    # fall back to one when the pinned revision is absent.
+    by_revision: dict[str, list[tuple[str, object]]] = {}
+    try:
+        repo = cache.load_results(models=models, tasks=[task], require_model_meta=False)
+        for model_result in repo.model_results:
+            for task_result in model_result.task_results:
+                if task_result.task_name == task:
+                    by_revision.setdefault(model_result.model_name, []).append(
+                        (str(model_result.model_revision), task_result)
+                    )
+    except Exception:  # noqa: BLE001 - offline or an unreadable cache: pinned revisions only
+        logger.warning("could not read the results repository; using pinned revisions only")
+
     scores: dict[str, float] = {}
     source: dict[str, str] = {}
     for name in models:
@@ -34,6 +53,11 @@ def fetch_truth(
         result = cache.load_task_result(task, meta)
         if result is not None:
             source[name] = "official"
+        elif by_revision.get(name):
+            # deterministic pick, and the revision is recorded so a non-pinned anchor is visible
+            revision, result = sorted(by_revision[name], key=lambda rt: rt[0])[0]
+            source[name] = f"official@{revision}"
+            logger.info("%s has no result at its pinned revision on %s; using %s", name, task, revision)
         elif evaluate_missing:
             logger.info("no official result for %s on %s; evaluating with mteb", name, task)
             res = mteb.evaluate(meta, task_obj, cache=cache, overwrite_strategy="only-missing", show_progress_bar=False)

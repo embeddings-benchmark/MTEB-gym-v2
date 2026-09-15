@@ -24,6 +24,7 @@ from . import corpus as corpus_mod
 from . import results, retrieval
 from . import task as task_mod
 from .judge import Judge, Verdict, task_prompt
+from .llm import llm_settings
 from .queries import Query, QueryGenerator
 from .rank import rate
 from .results import Result
@@ -170,14 +171,17 @@ def run(
         query_set = f"{slug(corp.id)}-{slug(_model_id(gen_client))}-{_sha(sorted(gen.params.items()))}"
         qs, n_generated = _cached_queries(out / "queries" / f"{query_set}.json", gen, corp.docs)
         texts, arm = {q.qid: q.text for q in qs}, "synthetic"
+        generator_settings = gen.settings or llm_settings(gen_client)  # cached queries: only the client is known
     elif queries == "original":
         if not corp.queries:
             raise ValueError(f"{corp.name} has no queries of its own")
         qs, n_generated, texts, arm = None, None, corp.queries, "original"
+        generator_settings = None
         query_set = f"{slug(corp.id)}-original"
     else:
         qs, n_generated = own_queries(queries), None
         texts, arm = {q.qid: q.text for q in qs}, "own"
+        generator_settings = None
         query_set = f"{slug(corp.id)}-own-{_sha(*(f'{k}:{v}' for k, v in texts.items()))}"
 
     import mteb
@@ -218,6 +222,9 @@ def run(
     path = results.record_path(out, corp.name, experiment)
     if path.exists():  # same configuration, same verdicts: the record stands, agreement included
         return Result.from_disk(path)
-    result = Result(results.build_record(corp, experiment, ratings, verdicts, time.time() - started, revisions), path)
+    llms = {"judge": llm_settings(judge), "generator": generator_settings}
+    result = Result(
+        results.build_record(corp, experiment, ratings, verdicts, time.time() - started, revisions, llms), path
+    )
     result.to_disk()
     return result

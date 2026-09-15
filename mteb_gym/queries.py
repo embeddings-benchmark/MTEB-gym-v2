@@ -15,6 +15,8 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
+from .llm import llm_settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -96,9 +98,11 @@ class QueryGenerator:
         self.system = _GEN_SYSTEM.replace("{task}", task)
         self.workers = max(1, workers)
         self.n_generated: int | None = None  # pre-filter count, for the record
+        self.settings: dict | None = None  # what the generator ran with, for the record
 
     def run(self, docs: dict[str, str]) -> list[Query]:
         raw = self.generate(docs)
+        self.settings = llm_settings(self.client)  # generation's settings, before the filter reuses the client at 0
         self.n_generated = len(raw)
         return self.filter(raw)
 

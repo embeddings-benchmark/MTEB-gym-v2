@@ -128,7 +128,7 @@ def run(
     task_description: str | None = None,
     n_queries: int = 100,
     top_k: int = 10,
-    doc_chars: int = 1500,
+    doc_chars: int = 2000,
     seed: int = 0,
     filter_queries: bool = True,
     output_folder: str | Path = "results",

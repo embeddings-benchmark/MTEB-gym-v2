@@ -67,11 +67,17 @@ class Verdict:
     parsed_ok: list[bool] = field(default_factory=list)  # per order; empty = no judge call
 
 
+def _cut(text: str, n: int) -> str:
+    """The first `n` characters, ending at a word boundary and marked, or the whole text if it fits."""
+    if len(text) <= n:
+        return text
+    head = text[:n]
+    return (head.rsplit(None, 1)[0] if " " in head else head) + "..."
+
+
 def _format(r: Ranked, doc_chars: int) -> str:
-    """The list as the judge sees it: each document cut to `doc_chars`, and marked when cut."""
-    return "\n".join(
-        f"  {i + 1}. {t[:doc_chars]}{'...' if len(t) > doc_chars else ''}" for i, t in enumerate(r.doc_texts)
-    )
+    """The list as the judge sees it: each document cut to `doc_chars`."""
+    return "\n".join(f"  {i + 1}. {_cut(t, doc_chars)}" for i, t in enumerate(r.doc_texts))
 
 
 def _parse(raw: str) -> tuple[str, str, bool]:
@@ -88,7 +94,7 @@ class Judge:
     MAX_EARLY_PARSE_FAIL = 0.5  # above this fraction unparseable: dead judge or bad API key
     MAX_EARLY_IDENTICAL = 0.95  # above this fraction identical lists: empty or mis-loaded corpus
 
-    def __init__(self, client, instruction: str | None = None, workers: int = 1, doc_chars: int = 1500):
+    def __init__(self, client, instruction: str | None = None, workers: int = 1, doc_chars: int = 2000):
         self.client = client
         self.system = judge_system(instruction)
         self.workers = max(1, workers)

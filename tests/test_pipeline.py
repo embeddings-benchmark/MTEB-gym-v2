@@ -89,8 +89,8 @@ def test_llm_drops_rejected_params():
 def test_judge():
     from mteb_gym.judge import _format
 
-    shown = _format(Ranked("q", "query", ["d1", "d2"], ["x" * 40, "y" * 10]), doc_chars=20)
-    assert shown.splitlines() == ["  1. " + "x" * 20 + "...", "  2. " + "y" * 10]  # cut and marked, or whole
+    shown = _format(Ranked("q", "query", ["d1", "d2"], ["one two three four five", "short"]), doc_chars=12)
+    assert shown.splitlines() == ["  1. one two...", "  2. short"]  # cut at a word boundary and marked, or whole
     queries = [Query(f"q{i}", f"query {i} about statins", ["D0"]) for i in range(30)]
     ra, rb = fake_ranked("a", queries), fake_ranked("b", queries)
     seq = Judge(MockLLM(seed=1), workers=1).judge_all(ra, rb, "m_a", "m_b")

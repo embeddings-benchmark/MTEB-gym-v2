@@ -29,7 +29,8 @@ def fetch_truth(
     models: list[str], task: str, *, evaluate_missing: bool = False
 ) -> tuple[dict[str, float], dict[str, dict]]:
     """Official main score (nDCG@10, x100) per model on `task`, and per model where it came from:
-    {"official": whether it is MTEB's published score, "revision": the results folder it was read from}."""
+    {"model_revision": the revision the score is filed under, "official": whether it is MTEB's
+    published score or one we ran}. Field names follow mteb's ModelResult."""
     import mteb
 
     cache = mteb.ResultCache()
@@ -44,7 +45,7 @@ def fetch_truth(
         meta = mteb.get_model_meta(name)
         if name in official:
             score, revision = official[name]
-            source[name] = {"official": True, "revision": revision}
+            source[name] = {"model_revision": revision, "official": True}
             if revision != meta.revision:
                 logger.info(
                     "%s on %s: score comes from revision %s, not the pinned %s", name, task, revision, meta.revision
@@ -57,7 +58,7 @@ def fetch_truth(
             if not res.task_results:
                 continue
             score = float(res.task_results[0].get_score())
-            source[name] = {"official": False, "revision": meta.revision}
+            source[name] = {"model_revision": meta.revision, "official": False}
         else:
             logger.warning("no official result for %s on %s; skipped (evaluate_missing=True to run it)", name, task)
             continue

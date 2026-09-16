@@ -258,7 +258,7 @@ def test_agreement():
     original = agreement.fetch_truth
     agreement.fetch_truth = lambda models, task, **kw: (
         {"model_a": 30.0, "model_b": 20.0, "model_c": 10.0},
-        {m: {"official": True, "revision": "r1"} for m in models},
+        {m: {"model_revision": "r1", "official": True} for m in models},
     )
     try:
         with tempfile.TemporaryDirectory() as tmp:
@@ -276,7 +276,7 @@ def test_agreement():
             agr = res.agreement(bootstrap=100, seed=0)
             assert agr["spearman_rho"] == 1.0 and agr["kendall_tau"] == 1.0
             assert Result.from_disk(res.path).record["agreement"]["truth_source"] == {
-                m: {"official": True, "revision": "r1"} for m in ("model_a", "model_b", "model_c")
+                m: {"model_revision": "r1", "official": True} for m in ("model_a", "model_b", "model_c")
             }
             assert load_results(tmp).agreement(bootstrap=10)[str(res.path)]["spearman_rho"] == 1.0
             assert (

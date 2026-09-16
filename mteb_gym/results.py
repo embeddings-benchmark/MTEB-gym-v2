@@ -88,6 +88,8 @@ def build_record(
     evaluation_time: float,
     revisions: dict[str, str | None],
     llms: dict | None = None,
+    ndcg: dict[str, float] | None = None,
+    labels: str | None = None,
 ) -> dict:
     dataset = getattr(corpus.metadata, "dataset", None) or {}
     return {
@@ -101,6 +103,7 @@ def build_record(
         "evaluation_time": float(evaluation_time),
         "config": experiment,
         "llms": llms,  # what the judge and generator actually ran with; informational, not identity
+        "labels": labels,  # what ndcg_at_10 below is scored against: "seed_documents", "dataset", or None
         "diagnostics": verdict_diagnostics(verdicts),
         "ratings": [
             {
@@ -113,6 +116,7 @@ def build_record(
                 "losses": m.losses,
                 "ties": m.ties,
                 "n": m.n,
+                "ndcg_at_10": (ndcg or {}).get(m.name),  # the no-judge baseline
             }
             for m in ratings
         ],
@@ -167,6 +171,12 @@ class Result:
             )
             agreement = agree.correlate(ratings, truth, bootstrap=bootstrap, seed=seed)
             agreement["truth_source"] = source
+            ndcg = {r["model"]: r["ndcg_at_10"] for r in self.record["ratings"] if r.get("ndcg_at_10") is not None}
+            if ndcg:  # the same comparison for the ranking by nDCG against the run's labels, no judge involved
+                agreement["labels_baseline"] = {
+                    "labels": self.record.get("labels"),
+                    **agree.correlate(ndcg, truth, bootstrap=bootstrap, seed=seed),
+                }
         self.record["agreement"] = agreement
         if self.path:
             self.to_disk()

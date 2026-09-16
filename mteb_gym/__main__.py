@@ -34,6 +34,7 @@ def main(argv=None) -> None:
     )
     ap.add_argument("--n-queries", type=int, default=100)
     ap.add_argument("--top-k", type=int, default=10)
+    ap.add_argument("--doc-chars", type=int, default=2000, help="characters of each document shown to the judge")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--no-filter", action="store_true")
     ap.add_argument("--output-folder", default="results")
@@ -49,6 +50,7 @@ def main(argv=None) -> None:
         task_description=args.task_description,
         n_queries=args.n_queries,
         top_k=args.top_k,
+        doc_chars=args.doc_chars,
         seed=args.seed,
         filter_queries=not args.no_filter,
         output_folder=args.output_folder,

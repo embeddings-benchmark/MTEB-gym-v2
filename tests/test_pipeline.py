@@ -87,6 +87,10 @@ def test_llm_drops_rejected_params():
 
 
 def test_judge():
+    from mteb_gym.judge import _format
+
+    shown = _format(Ranked("q", "query", ["d1", "d2"], ["one two three four five", "short"]), doc_chars=12)
+    assert shown.splitlines() == ["  1. one two...", "  2. short"]  # cut at a word boundary and marked, or whole
     queries = [Query(f"q{i}", f"query {i} about statins", ["D0"]) for i in range(30)]
     ra, rb = fake_ranked("a", queries), fake_ranked("b", queries)
     seq = Judge(MockLLM(seed=1), workers=1).judge_all(ra, rb, "m_a", "m_b")
@@ -195,6 +199,7 @@ def test_verdict_cache():
         )
         # a new revision of one model is a new key: no reuse
         assert verdict_key(judge, 5, "qs", "m_a", "r1", "m_b", "r2") != key
+        assert verdict_key(Judge(Counting(seed=1), doc_chars=300), 5, "qs", "m_a", "r1", "m_b", "r1") != key
         calls["n"] = 0
         judge_pair_cached(
             vdir,

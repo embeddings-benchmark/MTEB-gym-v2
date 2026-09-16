@@ -79,8 +79,11 @@ def own_queries(spec) -> list[Query]:
 
 
 def verdict_key(judge: Judge, top_k: int, query_set: str, a: str, rev_a: str | None, b: str, rev_b: str | None) -> str:
-    """Identity of a pair's verdicts: judge, resolved prompt, top_k, query set, both models at their revisions."""
-    return _sha(_model_id(judge.client), judge.system, top_k, query_set, f"{a}@{rev_a}", f"{b}@{rev_b}")
+    """Identity of a pair's verdicts: judge, resolved prompt, what it is shown (top_k documents of
+    doc_chars each), query set, both models at their revisions."""
+    return _sha(
+        _model_id(judge.client), judge.system, top_k, judge.doc_chars, query_set, f"{a}@{rev_a}", f"{b}@{rev_b}"
+    )
 
 
 def judge_pair_cached(
@@ -125,6 +128,7 @@ def run(
     task_description: str | None = None,
     n_queries: int = 100,
     top_k: int = 10,
+    doc_chars: int = 2000,
     seed: int = 0,
     filter_queries: bool = True,
     output_folder: str | Path = "results",
@@ -144,6 +148,7 @@ def run(
             Defaults to the task's mteb prompt.
         n_queries: Queries to generate.
         top_k: Documents judged per query.
+        doc_chars: Characters of each document shown to the judge; longer documents are cut and marked.
         seed: Seed for document sampling and the bootstrap.
         filter_queries: LLM quality filter and deduplication of generated queries.
         output_folder: Where queries, predictions, verdicts and the record are written.
@@ -193,7 +198,7 @@ def run(
         folder = out / "predictions" / f"{slug(m)}@{revisions[m]}" / query_set
         ranked[m] = retrieval.top_k(retrieval.predict(m, gym_task, folder, batch_size=batch_size), corp, texts, top_k)
 
-    jd = Judge(judge, instruction=description, workers=workers)
+    jd = Judge(judge, instruction=description, workers=workers, doc_chars=doc_chars)
     verdicts: list[Verdict] = []
     for i, (a, b) in enumerate(itertools.combinations(models, 2), 1):
         logger.info("pair %d/%d: %s vs %s", i, len(models) * (len(models) - 1) // 2, a, b)
@@ -213,6 +218,7 @@ def run(
         "n_queries_generated": n_generated,
         "n_queries": len(texts),
         "top_k": top_k,
+        "doc_chars": doc_chars,
         "seed": seed,
         **({f"gen_{k}": v for k, v in gen.params.items()} if arm == "synthetic" else {}),
         "models": models,

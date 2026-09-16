@@ -103,7 +103,7 @@ SGLang and `transformers serve` expose the same endpoint. A judge and a generato
 
 - `queries="synthetic"`: `"original"` uses the task's own queries; your own go in as a `.jsonl` with `id` and `text`, a `.txt` with one per line, or a list of strings.
 - `task_description=None`: one sentence on what counts as a good result, given to generator and judge; by default the task's mteb prompt.
-- `n_queries=100`, `top_k=10` documents judged per query, `seed=0`, `filter_queries=True` for the LLM quality filter and deduplication, `output_folder="results"`, `batch_size=32`, `workers=8` concurrent LLM calls.
+- `n_queries=100`, `top_k=10` documents judged per query, `doc_chars=1500` characters of each shown to the judge, `seed=0`, `filter_queries=True` for the LLM quality filter and deduplication, `output_folder="results"`, `batch_size=32`, `workers=8` concurrent LLM calls.
 
 `help(gym.run)` documents each one.
 

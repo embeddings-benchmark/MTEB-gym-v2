@@ -1,6 +1,7 @@
 """Tests for mteb_gym on the mock LLM: no network, no GPU, no API key. The
 end-to-end test needs mteb, bm25s and sentence-transformers and is skipped otherwise."""
 
+import json
 import tempfile
 import types
 from pathlib import Path
@@ -287,28 +288,39 @@ def test_agreement():
         agreement.fetch_truth = original
 
 
-def test_official_result_falls_back_to_other_revisions():
-    """The results repository files many models' scores under "external" or an older revision,
-    not under the revision mteb pins; the lookup must find those too."""
+def test_official_scores_across_revisions():
+    """The results repository files many models' scores under "external", not under the revision
+    mteb pins; the lookup must find those, and prefer the pinned one when both exist."""
     mteb = pytest.importorskip("mteb")
     from mteb.results import TaskResult
 
     meta = mteb.get_model_meta("BAAI/bge-base-en-v1.5")
-    with tempfile.TemporaryDirectory() as tmp:
-        cache = mteb.ResultCache(cache_path=tmp)  # no remote clone under a fresh path
-        folder = Path(tmp) / "results" / meta.model_name_as_path() / "external"
-        folder.mkdir(parents=True)
-        TaskResult(
-            task_name="NFCorpus",
-            dataset_revision="x",
-            mteb_version="0",
-            evaluation_time=1.0,
-            scores={"test": [{"main_score": 0.4, "hf_subset": "default", "languages": ["eng-Latn"]}]},
-        ).to_disk(folder / "NFCorpus.json")
-        assert cache.load_task_result("NFCorpus", meta) is None  # mteb alone: pinned folder only
-        result, revision = agreement.official_result(cache, "NFCorpus", meta)
-        assert revision == "external" and result.get_score() == 0.4
-        assert agreement.official_result(cache, "SciFact", meta) == (None, None)
+
+    def cache_with(revisions):
+        tmp = tempfile.mkdtemp()
+        for revision, score in revisions:
+            folder = Path(tmp) / "results" / meta.model_name_as_path() / revision
+            folder.mkdir(parents=True)
+            (folder / "model_meta.json").write_text(json.dumps({"name": meta.name, "revision": revision}))
+            TaskResult(
+                task_name="NFCorpus",
+                dataset_revision="x",
+                mteb_version="2.20.10",
+                evaluation_time=1.0,
+                scores={"test": [{"main_score": score, "hf_subset": "default", "languages": ["eng-Latn"]}]},
+            ).to_disk(folder / "NFCorpus.json")
+        return mteb.ResultCache(cache_path=tmp)
+
+    external_only = cache_with([("external", 0.40)])
+    assert external_only.load_task_result("NFCorpus", meta) is None  # mteb's per-revision lookup: nothing
+    result, revision = agreement.official_results(external_only, "NFCorpus", [meta.name])[meta.name]
+    assert revision == "external" and result.get_score() == 0.40
+
+    both = cache_with([("external", 0.40), (meta.revision, 0.55)])
+    result, revision = agreement.official_results(both, "NFCorpus", [meta.name])[meta.name]
+    assert revision == meta.revision and result.get_score() == 0.55  # the pinned revision wins
+
+    assert agreement.official_results(external_only, "SciFact", [meta.name]) == {}
 
 
 def test_end_to_end_local_corpus():

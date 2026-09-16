@@ -313,14 +313,12 @@ def test_official_scores_across_revisions():
 
     external_only = cache_with([("external", 0.40)])
     assert external_only.load_task_result("NFCorpus", meta) is None  # mteb's per-revision lookup: nothing
-    result, revision = agreement.official_results(external_only, "NFCorpus", [meta.name])[meta.name]
-    assert revision == "external" and result.get_score() == 0.40
+    assert agreement.official_scores(external_only, "NFCorpus", [meta.name]) == {meta.name: (0.40, "external")}
 
     both = cache_with([("external", 0.40), (meta.revision, 0.55)])
-    result, revision = agreement.official_results(both, "NFCorpus", [meta.name])[meta.name]
-    assert revision == meta.revision and result.get_score() == 0.55  # the pinned revision wins
+    assert agreement.official_scores(both, "NFCorpus", [meta.name]) == {meta.name: (0.55, meta.revision)}
 
-    assert agreement.official_results(external_only, "SciFact", [meta.name]) == {}
+    assert agreement.official_scores(external_only, "SciFact", [meta.name]) == {}
 
 
 def test_end_to_end_local_corpus():

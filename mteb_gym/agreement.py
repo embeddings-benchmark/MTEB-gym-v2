@@ -14,22 +14,15 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-def official_results(cache, task: str, models: list[str]) -> dict[str, tuple]:
-    """The official result per model on `task`, with the revision folder it came from.
-
-    mteb files a model's results under one folder per revision, and the results repository holds
-    both mteb's own runs and author-submitted ones under "external". `load_task_result` reads only
-    the revision mteb pins, which for many models is not where the score is. `load_results` reads
-    every folder and `join_revisions` applies mteb's own rule, the one behind the leaderboard: keep
-    the pinned revision if it has the task, else the best of the others.
-    """
-    joined = cache.load_results(models=models, tasks=[task]).join_revisions()
-    found = {}
-    for model_result in joined:
-        for task_result in model_result.task_results:
-            if task_result.task_name == task:
-                found[model_result.model_name] = (task_result, model_result.model_revision)
-    return found
+def official_scores(cache, task: str, models: list[str]) -> dict[str, tuple[float, str]]:
+    """Each model's official score on `task` and the revision it came from. A model can have
+    results under several revisions; `join_revisions` picks one by mteb's own rule."""
+    frame = (
+        cache.load_results(models=models, tasks=[task])
+        .join_revisions()
+        .to_dataframe(format="long", include_model_revision=True)
+    )
+    return {row.model_name: (float(row.score), row.model_revision) for row in frame.itertuples()}
 
 
 def fetch_truth(
@@ -44,29 +37,31 @@ def fetch_truth(
         cache.download_from_remote()
     except Exception:  # noqa: BLE001 - offline: use the local copy
         logger.warning("could not refresh the MTEB results cache; using the local copy")
-    task_obj = mteb.get_task(task)
-    found = official_results(cache, task, models)
+    official = official_scores(cache, task, models)
     scores: dict[str, float] = {}
     source: dict[str, dict] = {}
     for name in models:
-        result, revision = found.get(name, (None, None))
-        if result is not None:
+        meta = mteb.get_model_meta(name)
+        if name in official:
+            score, revision = official[name]
             source[name] = {"kind": "official", "revision": revision}
-            pinned = mteb.get_model_meta(name).revision
-            if revision != pinned:
+            if revision != meta.revision:
                 logger.info(
-                    "%s on %s: official score comes from revision %s, not the pinned %s", name, task, revision, pinned
+                    "%s on %s: score comes from revision %s, not the pinned %s", name, task, revision, meta.revision
                 )
         elif evaluate_missing:
             logger.info("no official result for %s on %s; evaluating with mteb", name, task)
-            meta = mteb.get_model_meta(name)
-            res = mteb.evaluate(meta, task_obj, cache=cache, overwrite_strategy="only-missing", show_progress_bar=False)
-            result = res.task_results[0] if res.task_results else None
+            res = mteb.evaluate(
+                meta, mteb.get_task(task), cache=cache, overwrite_strategy="only-missing", show_progress_bar=False
+            )
+            if not res.task_results:
+                continue
+            score = float(res.task_results[0].get_score())
             source[name] = {"kind": "self-run", "revision": meta.revision}
-        if result is None:
+        else:
             logger.warning("no official result for %s on %s; skipped (evaluate_missing=True to run it)", name, task)
             continue
-        scores[name] = round(float(result.get_score()) * 100, 2)
+        scores[name] = round(score * 100, 2)
     return scores, source
 
 

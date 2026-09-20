@@ -26,11 +26,15 @@ _BODY = (
     "ranking quality. "
 )
 _TAIL = (
-    "Be decisive when one set is clearly better; only answer 'tie' when they are "
-    "genuinely indistinguishable in usefulness. "
-    'Reply with strict JSON: {"winner": "A"|"B"|"tie", '
-    '"confidence": "low"|"medium"|"high", "reasoning": "one sentence"}'
+    'Answer "tie" when the two sets are equally useful. '
+    'Reply with strict JSON: {"winner": "A"|"B"|"tie", "reasoning": "one sentence"}'
 )
+_VERDICT_SCHEMA = {
+    "type": "object",
+    "properties": {"winner": {"type": "string", "enum": ["A", "B", "tie"]}, "reasoning": {"type": "string"}},
+    "required": ["winner", "reasoning"],
+    "additionalProperties": False,
+}
 
 
 def task_prompt(prompt) -> str | None:
@@ -102,7 +106,7 @@ class Judge:
                 f"System B results:\n{_format(second, self.doc_chars)}\n\nReply as JSON.",
             },
         ]
-        return _parse(self.client.chat(msg, temperature=0.0))
+        return _parse(self.client.chat(msg, temperature=0.0, schema=_VERDICT_SCHEMA))
 
     def judge_pair(self, ra: Ranked, rb: Ranked, model_a: str, model_b: str) -> Verdict:
         """Both presentation orders, averaged to a fractional score for A. Identical

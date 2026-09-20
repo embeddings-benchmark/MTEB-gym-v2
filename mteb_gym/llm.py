@@ -1,6 +1,8 @@
 """LLM clients: LLM for any OpenAI-compatible /chat/completions endpoint (vLLM, Ollama,
 OpenAI, Together, OpenRouter, and the compatible endpoints of Anthropic and Gemini),
-MockLLM for tests and dry runs. A client implements chat(messages, temperature=0.0) -> str."""
+MockLLM for tests and dry runs. A client implements
+chat(messages, temperature=0.0, schema=None) -> str; `schema` is the JSON shape the answer
+should take, which a provider can enforce and a client may ignore."""
 
 from __future__ import annotations
 
@@ -24,7 +26,7 @@ class MockLLM:
     def _hash(self, text: str) -> int:
         return int(hashlib.sha256(f"{self.seed}:{text}".encode()).hexdigest()[:8], 16)
 
-    def chat(self, messages: list[dict], temperature: float = 0.0) -> str:
+    def chat(self, messages: list[dict], temperature: float = 0.0, schema: dict | None = None) -> str:
         prompt = " ".join(m.get("content", "") for m in messages)
         h = self._hash(prompt)
         if "rate the quality" in prompt.lower():
@@ -66,10 +68,17 @@ class LLM:
         self.sent: dict = {}  # parameters actually sent on the last call, for the record
         self.served_model: str | None = None  # the model string the server reported, e.g. a dated snapshot
 
-    def chat(self, messages: list[dict], temperature: float = 0.0) -> str:
+    def chat(self, messages: list[dict], temperature: float = 0.0, schema: dict | None = None) -> str:
         params = {"temperature": temperature}
         if self.max_tokens is not None:
             params["max_completion_tokens"] = self.max_tokens
+        if schema is not None:
+            # a provider that cannot enforce it answers 400 and the parameter is dropped below;
+            # the prompt asks for the same JSON either way
+            params["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "answer", "schema": schema, "strict": True},
+            }
         while True:
             try:
                 sent = {k: v for k, v in params.items() if k not in self._rejected}

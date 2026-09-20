@@ -53,10 +53,13 @@ def predict(model_name: str, task, folder: Path, *, batch_size: int = 32) -> Pat
 
 
 def top_k(path: Path, corpus: Corpus, queries: dict[str, str], k: int) -> list[Ranked]:
+    """Each model's top `k` for each query, read from mteb's prediction file. A query that is
+    itself a document is dropped from its own results where mteb's flag says so (ArguAna, FiQA),
+    which is what mteb does when it scores."""
     hits = json.loads(path.read_text())["default"]["test"]
     out = []
     for qid, text in queries.items():
-        scores = hits.get(qid, {})
+        scores = {d: s for d, s in hits.get(qid, {}).items() if not (corpus.ignore_identical_ids and d == qid)}
         ids = sorted(scores, key=scores.get, reverse=True)[:k]
         out.append(Ranked(qid, text, ids, [corpus.docs[d] for d in ids]))
     return out

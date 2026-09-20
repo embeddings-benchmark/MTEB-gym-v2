@@ -101,6 +101,29 @@ def test_description_is_what_the_encoders_get():
     assert described("BrightBiologyRetrieval")[0].startswith("Represent this biology post")
 
 
+def test_original_queries_are_sampled_and_self_matches_dropped():
+    """The dataset's own queries obey n_queries, and a query that is itself a document is
+    dropped from its own results where mteb's flag says so."""
+    from mteb_gym.corpus import Corpus
+    from mteb_gym.retrieval import top_k
+    from mteb_gym.run import sample_queries
+
+    queries = {f"q{i}": f"query {i}" for i in range(10)}
+    assert sample_queries(queries, 20, 0) == queries  # fewer than asked for: all of them
+    few = sample_queries(queries, 3, 0)
+    assert len(few) == 3 and few == sample_queries(queries, 3, 0)  # the same three every time
+    assert list(few) == [q for q in queries if q in few]  # in the dataset's order
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "p.json"
+        path.write_text(json.dumps({"default": {"test": {"d0": {"d0": 9.0, "d1": 5.0, "d2": 1.0}}}}))
+        docs = {"d0": "the query itself", "d1": "an answer", "d2": "another"}
+        plain = Corpus("c", "x@1/default/test", docs, None)
+        assert top_k(path, plain, {"d0": "the query itself"}, 2)[0].doc_ids == ["d0", "d1"]
+        flagged = Corpus("c", "x@1/default/test", docs, None, ignore_identical_ids=True)
+        assert top_k(path, flagged, {"d0": "the query itself"}, 2)[0].doc_ids == ["d1", "d2"]
+
+
 def test_judge():
     from mteb_gym.judge import _format
 

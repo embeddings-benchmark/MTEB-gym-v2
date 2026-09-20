@@ -62,9 +62,7 @@ def resolve_description(task_description: str | None, corpus) -> tuple[str | Non
             except KeyError:
                 continue
             if prompt:
-                logger.info("%s has no prompt; using the one from %s", metadata.name, base)
                 return prompt, f"mteb:task_prompt:{base}"
-    logger.info("%s has no task prompt: judging plain relevance", metadata.name)
     return None, None
 
 
@@ -185,6 +183,7 @@ def run(
 
     corp = corpus_mod.load(corpus)
     description, description_source = resolve_description(task_description, corp)
+    logger.info("criterion: %s [%s]", description or "plain relevance", description_source or "none given")
     gen = QueryGenerator(
         gen_client, task_description=description, n_queries=n_queries, seed=seed, filter=filter_queries, workers=workers
     )

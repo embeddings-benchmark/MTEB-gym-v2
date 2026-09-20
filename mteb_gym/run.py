@@ -42,32 +42,13 @@ def _sha(*parts) -> str:
 
 
 def resolve_description(task_description: str | None, corpus) -> tuple[str | None, str | None]:
-    """What counts as a good result, for the generator and the judge: the caller's sentence, else the
-    task's own mteb prompt, else the prompt of the task it was adapted from (variants such as
-    HardNegatives carry none), else nothing, which judges plain relevance as mteb's own fallback does.
-
-    mteb's prompt is what it tells an instruction-tuned encoder, so a few tasks phrase it as an
-    instruction to the model rather than a definition of relevance. Every run prints the sentence it
-    is using; pass `task_description` to replace one that reads badly.
-    """
+    """The sentence the generator and the judge are given. By default the one mteb gives the
+    embedding models for this task: `TaskMetadata.prompt` if the task has one, else nothing, which
+    judges plain relevance as mteb's own fallback does. `task_description` replaces it."""
     if task_description is not None:
         return task_description, "config:task_description"
-    metadata = corpus.metadata
-    prompt = task_prompt(getattr(metadata, "prompt", None))
-    if prompt:
-        return prompt, "mteb:task_prompt"
-    bases = getattr(metadata, "adapted_from", None) or []
-    if bases:
-        import mteb
-
-        for base in bases:
-            try:
-                prompt = task_prompt(mteb.get_task(base).metadata.prompt)
-            except KeyError:
-                continue
-            if prompt:
-                return prompt, f"mteb:task_prompt:{base}"
-    return None, None
+    prompt = task_prompt(getattr(corpus.metadata, "prompt", None))
+    return (prompt, "mteb:task_prompt") if prompt else (None, None)
 
 
 def _cached_queries(path: Path, gen: QueryGenerator, docs: dict[str, str]) -> tuple[list[Query], int | None]:

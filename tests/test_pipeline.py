@@ -87,19 +87,18 @@ def test_llm_drops_rejected_params():
     assert llm.served_model == "m-2026-01-01" and llm.sent == {}  # both refused: the record shows neither
 
 
-def test_description_from_the_adapted_task():
-    """Variants such as HardNegatives carry no prompt of their own; mteb records the task they came
-    from, which does. BRIGHT's prompt is an encoder prefix, so it still judges plain relevance."""
+def test_description_is_what_the_encoders_get():
+    """The judge is given the task's own mteb prompt, the same sentence mteb gives an
+    instruction-tuned encoder, or nothing when the task has none."""
     mteb = pytest.importorskip("mteb")
     from mteb_gym.corpus import Corpus
 
     def described(name):
         return resolve_description(None, Corpus(name, name, {}, mteb.get_task(name).metadata))
 
-    prompt, source = described("ClimateFEVERHardNegatives")
-    assert source == "mteb:task_prompt:ClimateFEVER" and "climate change" in prompt
     assert described("ArguAna") == ("Given a claim, find documents that refute the claim", "mteb:task_prompt")
-    assert described("AppsRetrieval") == (None, None)  # no prompt and nothing to inherit
+    assert described("ClimateFEVERHardNegatives") == (None, None)  # no prompt: so is the encoder's
+    assert described("BrightBiologyRetrieval")[0].startswith("Represent this biology post")
 
 
 def test_judge():

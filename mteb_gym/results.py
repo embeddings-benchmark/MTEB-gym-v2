@@ -61,7 +61,6 @@ def verdict_diagnostics(verdicts: list[Any]) -> dict[str, Any]:
     n = len(verdicts)
     identical = sum(v.raw == ["identical"] for v in verdicts)
     ties = sum(float(v.score_a) == 0.5 for v in verdicts)
-    both_bad = sum("both bad" in v.raw for v in verdicts)
     asks = failures = first = decisive = 0
     for v in verdicts:
         asks += len(v.parsed_ok)
@@ -74,7 +73,6 @@ def verdict_diagnostics(verdicts: list[Any]) -> dict[str, Any]:
         "judge_calls": asks,
         "n_comparisons": n,
         "commit_rate": (n - ties) / n if n else None,
-        "both_bad_rate": both_bad / n if n else None,
         "tie_rate": ties / n if n else None,
         "a_first_rate": first / decisive if decisive else None,
         "parse_failure_rate": failures / asks if asks else None,

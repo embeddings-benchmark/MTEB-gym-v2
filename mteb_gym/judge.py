@@ -18,16 +18,12 @@ from .retrieval import Ranked
 
 logger = logging.getLogger(__name__)
 
-_GENERIC = (
-    "You compare two retrieval systems. Given a query and two ranked result sets "
-    "(System A and System B), decide which set better satisfies the query, judging "
-    "relevance, coverage of the information need, and ranking quality. "
-)
-_WITH_TASK = (
-    "You compare two retrieval systems. The retrieval task is: {task}. "
-    "Given a query and two ranked result sets (System A and System B), decide which "
-    "set better satisfies this task for the query, judging task fit, coverage of the "
-    "information need, and ranking quality. "
+_ROLE = "You compare two retrieval systems.\n"
+_TASK = "The retrieval task is: {task}\n"
+_BODY = (
+    "Given a query and two ranked result sets (System A and System B), decide which set "
+    "better satisfies the query, judging relevance, coverage of the information need, and "
+    "ranking quality. "
 )
 _TAIL = (
     "Be decisive when one set is clearly better; only answer 'tie' when they are "
@@ -38,18 +34,15 @@ _TAIL = (
 
 
 def task_prompt(prompt) -> str | None:
-    """A task's criterion from mteb TaskMetadata.prompt, verbatim. None when there is
-    none or it is an encoder prefix rather than a task statement
-    ("Represent this post for searching passages: ", BRIGHT)."""
-    p = (prompt if isinstance(prompt, str) else (prompt or {}).get("query") or "").strip()
-    if not p or p.endswith(":") or p.lower().startswith("represent "):
-        return None
-    return p
+    """The query prompt from mteb TaskMetadata.prompt, which is a string or a dict of them."""
+    return (prompt if isinstance(prompt, str) else (prompt or {}).get("query") or "").strip() or None
 
 
 def judge_system(instruction: str | None = None) -> str:
-    head = _WITH_TASK.format(task=instruction.rstrip(".")) if instruction else _GENERIC
-    return head + _TAIL
+    """The judge's instruction. With and without a task description the wording is identical
+    apart from the description itself, so a run with one can be compared with a run without."""
+    task = _TASK.format(task=instruction) if instruction else ""
+    return _ROLE + task + _BODY + _TAIL
 
 
 _OUTCOME = {"A": 1.0, "tie": 0.5, "B": 0.0}

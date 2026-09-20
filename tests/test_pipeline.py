@@ -87,6 +87,20 @@ def test_llm_drops_rejected_params():
     assert llm.served_model == "m-2026-01-01" and llm.sent == {}  # both refused: the record shows neither
 
 
+def test_description_is_what_the_encoders_get():
+    """The judge is given the task's own mteb prompt, the same sentence mteb gives an
+    instruction-tuned encoder, or nothing when the task has none."""
+    mteb = pytest.importorskip("mteb")
+    from mteb_gym.corpus import Corpus
+
+    def described(name):
+        return resolve_description(None, Corpus(name, name, {}, mteb.get_task(name).metadata))
+
+    assert described("ArguAna") == ("Given a claim, find documents that refute the claim", "mteb:task_prompt")
+    assert described("ClimateFEVERHardNegatives") == (None, None)  # no prompt: so is the encoder's
+    assert described("BrightBiologyRetrieval")[0].startswith("Represent this biology post")
+
+
 def test_judge():
     from mteb_gym.judge import _format
 
@@ -150,7 +164,9 @@ def test_correlate():
 
 
 def test_instruction():
-    assert task_prompt("Represent this biology post for searching relevant passages: ") is None
+    assert task_prompt("Represent this biology post for searching relevant passages: ") == (
+        "Represent this biology post for searching relevant passages:"
+    )  # mteb's own text, verbatim; replace it with task_description if it reads badly
     assert (
         task_prompt({"query": "Given a claim, find documents that refute the claim"})
         == "Given a claim, find documents that refute the claim"
@@ -164,12 +180,20 @@ def test_instruction():
         "mteb:task_prompt",
     )
     assert resolve_description("Prefer replies that resolve the ticket", corpus)[1] == "config:task_description"
-    assert resolve_description(None, types.SimpleNamespace(metadata=types.SimpleNamespace(prompt=None))) == (None, None)
+    bare = types.SimpleNamespace(metadata=types.SimpleNamespace(prompt=None, name="X", adapted_from=None))
+    assert resolve_description(None, bare) == (None, None)
     gen = QueryGenerator(MockLLM(), task_description="Given a claim, find documents that refute the claim")
     assert "refute the claim" in gen.system and gen.params["task_description"]  # part of the query cache key
     assert "retrieval task is" not in QueryGenerator(MockLLM()).system
-    assert "refute the claim" in judge_system("Given a claim, find documents that refute the claim")
-    assert "retrieval task is" not in judge_system(None)
+    with_task = judge_system("Given a claim, find documents that refute the claim")
+    # the sentence is inserted as written, whatever punctuation it ends with
+    assert "relevant passages:\n" in judge_system("Represent this biology post for searching relevant passages:")
+    without = judge_system(None)
+    assert "refute the claim" in with_task and "retrieval task is" not in without
+    # the only difference is the sentence itself, so an arm with one compares with an arm without
+    assert (
+        with_task.replace("The retrieval task is: Given a claim, find documents that refute the claim\n", "") == without
+    )
 
 
 def test_verdict_cache():

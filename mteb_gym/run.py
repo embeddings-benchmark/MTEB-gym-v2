@@ -42,11 +42,13 @@ def _sha(*parts) -> str:
 
 
 def resolve_description(task_description: str | None, corpus) -> tuple[str | None, str | None]:
-    """None: the task's own mteb prompt if it has one; text: verbatim."""
-    if task_description is None:
-        p = task_prompt(getattr(corpus.metadata, "prompt", None))
-        return (p, "mteb:task_prompt") if p else (None, None)
-    return task_description, "config:task_description"
+    """The sentence the generator and the judge are given. By default the one mteb gives the
+    embedding models for this task: `TaskMetadata.prompt` if the task has one, else nothing, which
+    judges plain relevance as mteb's own fallback does. `task_description` replaces it."""
+    if task_description is not None:
+        return task_description, "config:task_description"
+    prompt = task_prompt(getattr(corpus.metadata, "prompt", None))
+    return (prompt, "mteb:task_prompt") if prompt else (None, None)
 
 
 def _cached_queries(path: Path, gen: QueryGenerator, docs: dict[str, str]) -> tuple[list[Query], int | None]:
@@ -166,6 +168,7 @@ def run(
 
     corp = corpus_mod.load(corpus)
     description, description_source = resolve_description(task_description, corp)
+    logger.info("criterion: %s", description or "plain relevance")
     gen = QueryGenerator(
         gen_client, task_description=description, n_queries=n_queries, seed=seed, filter=filter_queries, workers=workers
     )

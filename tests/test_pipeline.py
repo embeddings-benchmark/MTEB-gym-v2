@@ -184,8 +184,13 @@ def test_instruction():
     gen = QueryGenerator(MockLLM(), task_description="Given a claim, find documents that refute the claim")
     assert "refute the claim" in gen.system and gen.params["task_description"]  # part of the query cache key
     assert "retrieval task is" not in QueryGenerator(MockLLM()).system
-    assert "refute the claim" in judge_system("Given a claim, find documents that refute the claim")
-    assert "retrieval task is" not in judge_system(None)
+    with_task = judge_system("Given a claim, find documents that refute the claim")
+    without = judge_system(None)
+    assert "refute the claim" in with_task and "retrieval task is" not in without
+    # the only difference is the sentence itself, so an arm with one compares with an arm without
+    assert (
+        with_task.replace("The retrieval task is: Given a claim, find documents that refute the claim. ", "") == without
+    )
 
 
 def test_verdict_cache():

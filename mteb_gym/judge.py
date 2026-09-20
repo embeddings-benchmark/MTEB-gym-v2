@@ -18,12 +18,13 @@ from .retrieval import Ranked
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM = (
-    "You compare two retrieval systems. {task}Given a query and two ranked result sets "
-    "(System A and System B), decide which set better satisfies the query, judging "
-    "relevance, coverage of the information need, and ranking quality. "
+_ROLE = "You compare two retrieval systems.\n"
+_TASK = "The retrieval task is: {task}\n"
+_BODY = (
+    "Given a query and two ranked result sets (System A and System B), decide which set "
+    "better satisfies the query, judging relevance, coverage of the information need, and "
+    "ranking quality. "
 )
-_TASK = "The retrieval task is: {task}. "
 _TAIL = (
     "Be decisive when one set is clearly better; only answer 'tie' when they are "
     "genuinely indistinguishable in usefulness. "
@@ -40,8 +41,8 @@ def task_prompt(prompt) -> str | None:
 def judge_system(instruction: str | None = None) -> str:
     """The judge's instruction. With and without a task description the wording is identical
     apart from the description itself, so a run with one can be compared with a run without."""
-    task = _TASK.format(task=instruction.rstrip(" .:;,")) if instruction else ""
-    return _SYSTEM.format(task=task) + _TAIL
+    task = _TASK.format(task=instruction) if instruction else ""
+    return _ROLE + task + _BODY + _TAIL
 
 
 _OUTCOME = {"A": 1.0, "tie": 0.5, "B": 0.0}

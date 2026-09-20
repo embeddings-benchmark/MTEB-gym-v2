@@ -28,14 +28,14 @@ class Query:
     quality: int | None = None  # LLM quality score 1-5, None if unfiltered
 
 
-_GEN_SYSTEM = (
-    "You write realistic search queries for evaluating retrieval systems. {task}"
+_GEN_ROLE = "You write realistic search queries for evaluating retrieval systems.\n"
+_GEN_TASK = "The retrieval task is: {task}\nEvery query must express that kind of need.\n"
+_GEN_BODY = (
     "Given a few documents from a corpus, produce ONE natural query a real user "
     "might type that is answerable using the corpus but is NOT a restatement of "
     "any single shown document. Vary phrasing and specificity. "
     'Reply with strict JSON: {"query": "..."}'
 )
-_GEN_TASK = "The retrieval task is: {task}. Every query must express that kind of need. "
 
 _FILTER_SYSTEM = (
     "You rate the quality of search queries for benchmarking retrieval models. "
@@ -94,8 +94,8 @@ class QueryGenerator:
             min_score=min_score,
             dedup=dedup,
         )  # everything that changes the query set
-        task = _GEN_TASK.format(task=task_description.rstrip(".")) if task_description else ""
-        self.system = _GEN_SYSTEM.replace("{task}", task)
+        task = _GEN_TASK.format(task=task_description) if task_description else ""
+        self.system = _GEN_ROLE + task + _GEN_BODY
         self.workers = max(1, workers)
         self.n_generated: int | None = None  # pre-filter count, for the record
         self.settings: dict | None = None  # what the generator ran with, for the record

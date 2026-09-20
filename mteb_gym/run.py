@@ -183,7 +183,7 @@ def run(
 
     corp = corpus_mod.load(corpus)
     description, description_source = resolve_description(task_description, corp)
-    logger.info("criterion: %s [%s]", description or "plain relevance", description_source or "none given")
+    logger.info("criterion: %s", description or "plain relevance")
     gen = QueryGenerator(
         gen_client, task_description=description, n_queries=n_queries, seed=seed, filter=filter_queries, workers=workers
     )

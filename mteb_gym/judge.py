@@ -26,13 +26,15 @@ _BODY = (
     "ranking quality. "
 )
 _TAIL = (
-    'Answer "tie" when the two sets are equally useful. '
-    'Reply with strict JSON: {"winner": "A"|"B"|"tie", "reasoning": "one sentence"}'
+    'Answer "tie" when the two sets are equally useful, "both bad" when neither is useful. '
+    "Reply with strict JSON, reasoning first: "
+    '{"reasoning": "one sentence", "winner": "A"|"B"|"tie"|"both bad"}'
 )
-_VERDICT_SCHEMA = {
+_WINNERS = ("A", "B", "tie", "both bad")  # the four answers MTEB Arena offers its human voters
+_VERDICT_SCHEMA = {  # field order is generation order: the judge reasons before it commits
     "type": "object",
-    "properties": {"winner": {"type": "string", "enum": ["A", "B", "tie"]}, "reasoning": {"type": "string"}},
-    "required": ["winner", "reasoning"],
+    "properties": {"reasoning": {"type": "string"}, "winner": {"type": "string", "enum": list(_WINNERS)}},
+    "required": ["reasoning", "winner"],
     "additionalProperties": False,
 }
 
@@ -49,7 +51,7 @@ def judge_system(instruction: str | None = None) -> str:
     return _ROLE + task + _BODY + _TAIL
 
 
-_OUTCOME = {"A": 1.0, "tie": 0.5, "B": 0.0}
+_OUTCOME = {"A": 1.0, "tie": 0.5, "both bad": 0.5, "B": 0.0}  # neither useful: no evidence either way
 
 
 @dataclass
@@ -81,7 +83,7 @@ def _parse(raw: str) -> tuple[str, str, bool]:
     """(winner, reasoning, parsed_ok). An unparseable answer scores as a tie but is flagged."""
     out = extract_json(raw)
     winner = out.get("winner")
-    ok = winner in ("A", "B", "tie")
+    ok = winner in _WINNERS
     return (winner if ok else "tie"), out.get("reasoning", ""), ok
 
 

@@ -250,6 +250,7 @@ def test_record():
         "judge_calls": 4,
         "n_comparisons": 3,
         "commit_rate": 1 / 3,
+        "both_bad_rate": 0.0,
         "tie_rate": 2 / 3,
         "a_first_rate": 0.5,
         "parse_failure_rate": 0.25,

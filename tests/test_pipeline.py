@@ -99,7 +99,7 @@ def test_description_from_the_adapted_task():
     prompt, source = described("ClimateFEVERHardNegatives")
     assert source == "mteb:task_prompt:ClimateFEVER" and "climate change" in prompt
     assert described("ArguAna") == ("Given a claim, find documents that refute the claim", "mteb:task_prompt")
-    assert described("BrightBiologyRetrieval") == (None, None)
+    assert described("AppsRetrieval") == (None, None)  # no prompt and nothing to inherit
 
 
 def test_judge():
@@ -165,7 +165,9 @@ def test_correlate():
 
 
 def test_instruction():
-    assert task_prompt("Represent this biology post for searching relevant passages: ") is None
+    assert task_prompt("Represent this biology post for searching relevant passages: ") == (
+        "Represent this biology post for searching relevant passages:"
+    )  # mteb's own text, verbatim; replace it with task_description if it reads badly
     assert (
         task_prompt({"query": "Given a claim, find documents that refute the claim"})
         == "Given a claim, find documents that refute the claim"

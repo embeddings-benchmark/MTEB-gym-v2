@@ -45,6 +45,10 @@ def resolve_description(task_description: str | None, corpus) -> tuple[str | Non
     """What counts as a good result, for the generator and the judge: the caller's sentence, else the
     task's own mteb prompt, else the prompt of the task it was adapted from (variants such as
     HardNegatives carry none), else nothing, which judges plain relevance as mteb's own fallback does.
+
+    mteb's prompt is what it tells an instruction-tuned encoder, so a few tasks phrase it as an
+    instruction to the model rather than a definition of relevance. Every run prints the sentence it
+    is using; pass `task_description` to replace one that reads badly.
     """
     if task_description is not None:
         return task_description, "config:task_description"

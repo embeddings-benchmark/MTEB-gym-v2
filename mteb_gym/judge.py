@@ -33,13 +33,8 @@ _TAIL = (
 
 
 def task_prompt(prompt) -> str | None:
-    """A task's criterion from mteb TaskMetadata.prompt, verbatim. None when there is
-    none or it is an encoder prefix rather than a task statement
-    ("Represent this post for searching passages: ", BRIGHT)."""
-    p = (prompt if isinstance(prompt, str) else (prompt or {}).get("query") or "").strip()
-    if not p or p.endswith(":") or p.lower().startswith("represent "):
-        return None
-    return p
+    """The query prompt from mteb TaskMetadata.prompt, which is a string or a dict of them."""
+    return (prompt if isinstance(prompt, str) else (prompt or {}).get("query") or "").strip() or None
 
 
 def judge_system(instruction: str | None = None) -> str:

@@ -87,6 +87,21 @@ def test_llm_drops_rejected_params():
     assert llm.served_model == "m-2026-01-01" and llm.sent == {}  # both refused: the record shows neither
 
 
+def test_description_from_the_adapted_task():
+    """Variants such as HardNegatives carry no prompt of their own; mteb records the task they came
+    from, which does. BRIGHT's prompt is an encoder prefix, so it still judges plain relevance."""
+    mteb = pytest.importorskip("mteb")
+    from mteb_gym.corpus import Corpus
+
+    def described(name):
+        return resolve_description(None, Corpus(name, name, {}, mteb.get_task(name).metadata))
+
+    prompt, source = described("ClimateFEVERHardNegatives")
+    assert source == "mteb:task_prompt:ClimateFEVER" and "climate change" in prompt
+    assert described("ArguAna") == ("Given a claim, find documents that refute the claim", "mteb:task_prompt")
+    assert described("BrightBiologyRetrieval") == (None, None)
+
+
 def test_judge():
     from mteb_gym.judge import _format
 
@@ -164,7 +179,8 @@ def test_instruction():
         "mteb:task_prompt",
     )
     assert resolve_description("Prefer replies that resolve the ticket", corpus)[1] == "config:task_description"
-    assert resolve_description(None, types.SimpleNamespace(metadata=types.SimpleNamespace(prompt=None))) == (None, None)
+    bare = types.SimpleNamespace(metadata=types.SimpleNamespace(prompt=None, name="X", adapted_from=None))
+    assert resolve_description(None, bare) == (None, None)
     gen = QueryGenerator(MockLLM(), task_description="Given a claim, find documents that refute the claim")
     assert "refute the claim" in gen.system and gen.params["task_description"]  # part of the query cache key
     assert "retrieval task is" not in QueryGenerator(MockLLM()).system

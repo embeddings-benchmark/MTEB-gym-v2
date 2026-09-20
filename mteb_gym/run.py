@@ -42,11 +42,30 @@ def _sha(*parts) -> str:
 
 
 def resolve_description(task_description: str | None, corpus) -> tuple[str | None, str | None]:
-    """None: the task's own mteb prompt if it has one; text: verbatim."""
-    if task_description is None:
-        p = task_prompt(getattr(corpus.metadata, "prompt", None))
-        return (p, "mteb:task_prompt") if p else (None, None)
-    return task_description, "config:task_description"
+    """What counts as a good result, for the generator and the judge: the caller's sentence, else the
+    task's own mteb prompt, else the prompt of the task it was adapted from (variants such as
+    HardNegatives carry none), else nothing, which judges plain relevance as mteb's own fallback does.
+    """
+    if task_description is not None:
+        return task_description, "config:task_description"
+    metadata = corpus.metadata
+    prompt = task_prompt(getattr(metadata, "prompt", None))
+    if prompt:
+        return prompt, "mteb:task_prompt"
+    bases = getattr(metadata, "adapted_from", None) or []
+    if bases:
+        import mteb
+
+        for base in bases:
+            try:
+                prompt = task_prompt(mteb.get_task(base).metadata.prompt)
+            except KeyError:
+                continue
+            if prompt:
+                logger.info("%s has no prompt; using the one from %s", metadata.name, base)
+                return prompt, f"mteb:task_prompt:{base}"
+    logger.info("%s has no task prompt: judging plain relevance", metadata.name)
+    return None, None
 
 
 def _cached_queries(path: Path, gen: QueryGenerator, docs: dict[str, str]) -> tuple[list[Query], int | None]:

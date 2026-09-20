@@ -40,7 +40,7 @@ def task_prompt(prompt) -> str | None:
 def judge_system(instruction: str | None = None) -> str:
     """The judge's instruction. With and without a task description the wording is identical
     apart from the description itself, so a run with one can be compared with a run without."""
-    task = _TASK.format(task=instruction.rstrip(".")) if instruction else ""
+    task = _TASK.format(task=instruction.rstrip(" .:;,")) if instruction else ""
     return _SYSTEM.format(task=task) + _TAIL
 
 

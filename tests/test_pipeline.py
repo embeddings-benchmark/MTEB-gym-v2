@@ -186,6 +186,7 @@ def test_instruction():
     assert "refute the claim" in gen.system and gen.params["task_description"]  # part of the query cache key
     assert "retrieval task is" not in QueryGenerator(MockLLM()).system
     with_task = judge_system("Given a claim, find documents that refute the claim")
+    assert "passages. " in judge_system("Represent this biology post for searching relevant passages:")
     without = judge_system(None)
     assert "refute the claim" in with_task and "retrieval task is" not in without
     # the only difference is the sentence itself, so an arm with one compares with an arm without

@@ -227,7 +227,7 @@ def run(
         pred = retrieval.predict(m, gym_task, folder, batch_size=batch_size)
         ranked[m] = retrieval.top_k(pred, corp, texts, top_k)
         if labels:
-            ndcg[m] = retrieval.ndcg_at_10(pred, labels)
+            ndcg[m] = retrieval.ndcg_at_10(pred, labels, corp.ignore_identical_ids)
 
     jd = Judge(judge, instruction=description, workers=workers, doc_chars=doc_chars)
     jd = Judge(judge, instruction=description, workers=workers)

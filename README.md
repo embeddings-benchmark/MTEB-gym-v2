@@ -118,6 +118,16 @@ results/nfcorpus/
 ```
 
 - **Reruns.** The same configuration reuses all of it; adding a model judges only the new pairs.
+- **Many models on one GPU.** Retrieval loads one model at a time, and a long roster can exhaust the GPU in one process. Run the models one per process so the operating system reclaims each, then judge:
+
+  ```bash
+  for m in "${MODELS[@]}"; do
+      mteb-gym predict --corpus NFCorpus --model "$m" --generator gpt-5.4-mini --output-folder results/nfcorpus
+  done
+  mteb-gym run --corpus NFCorpus --models "${MODELS[@]}" --generator gpt-5.4-mini --judge gpt-5.4 --output-folder results/nfcorpus
+  ```
+
+  `run` finds the prediction files already written and only judges. The arguments that decide the query set, the corpus, generator, `queries`, `n_queries` and `seed`, must match between the two.
 - **Cost.** Two judge calls per query per model pair: 100 queries and 10 models is 9,000 calls.
 - **Reading back.** `gym.Result.from_disk(path)` for one run (`.leaderboard`, `.to_dataframe()`); `gym.load_results("results/")` for every run under a directory.
 

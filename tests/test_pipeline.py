@@ -467,7 +467,8 @@ def test_predict_then_run_reuses_the_predictions():
 
         res = run(docs, models, judge=Counting(), generator=MockLLM(), **shared)
         assert len(res.record["ratings"]) == 2 and calls["n"] > 0  # judged
-        assert [p for p in (Path(tmp) / "out" / "predictions").rglob("*_predictions.json")] == paths  # no new files
+        found = set((Path(tmp) / "out" / "predictions").rglob("*_predictions.json"))
+        assert found == set(paths)  # the run wrote no new prediction files
 
 
 def test_end_to_end_mteb_task():

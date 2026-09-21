@@ -20,6 +20,7 @@ import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
+from typing import NamedTuple
 
 from . import corpus as corpus_mod
 from . import results, retrieval
@@ -144,6 +145,78 @@ def judge_pair_cached(
     return sorted((v for v in done.values() if v.qid in order), key=lambda v: order[v.qid])
 
 
+class QuerySet(NamedTuple):
+    """The queries a run judges on, and how they were obtained."""
+
+    id: str  # part of the prediction and verdict paths
+    texts: dict[str, str]
+    queries: list[Query] | None  # None when they are the dataset's own
+    arm: str  # synthetic | original | own
+    n_generated: int | None  # before filtering, for the record
+    generator_settings: dict | None
+
+
+def resolve_queries(
+    corp, out: Path, queries, gen_client, gen, n_queries: int, seed: int, has_generator: bool
+) -> QuerySet:
+    """Generate the queries, take the dataset's own, or read the ones you supplied."""
+    if queries == "synthetic":
+        if not has_generator:
+            logger.warning("no generator given: the judge also writes the queries (self-preference risk)")
+        qid = f"{slug(corp.id)}-{slug(_model_id(gen_client))}-{_sha(sorted(gen.params.items()))}"
+        qs, n_generated = _cached_queries(out / "queries" / f"{qid}.json", gen, corp.docs)
+        settings = gen.settings or llm_settings(gen_client)  # cached queries: only the client is known
+        return QuerySet(qid, {q.qid: q.text for q in qs}, qs, "synthetic", n_generated, settings)
+    if queries == "original":
+        if not corp.queries:
+            raise ValueError(f"{corp.name} has no queries of its own")
+        texts = sample_queries(corp.queries, n_queries, seed)
+        return QuerySet(f"{slug(corp.id)}-original-n{len(texts)}-s{seed}", texts, None, "original", None, None)
+    qs = own_queries(queries)
+    texts = {q.qid: q.text for q in qs}
+    qid = f"{slug(corp.id)}-own-{_sha(*(f'{k}:{v}' for k, v in texts.items()))}"
+    return QuerySet(qid, texts, qs, "own", None, None)
+
+
+def predict(
+    corpus: str | Path,
+    model: str,
+    *,
+    generator=None,
+    queries="synthetic",
+    task_description: str | None = None,
+    n_queries: int = 100,
+    seed: int = 0,
+    filter_queries: bool = True,
+    output_folder: str | Path = "results",
+    batch_size: int = 32,
+    workers: int = 8,
+) -> Path:
+    """Retrieve one model's results for `corpus`, and write mteb's prediction file.
+
+    One model per call, as `mteb run` takes one model, so a roster can be run one model per process
+    and the GPU is returned to the operating system between them. `run()` then finds every
+    prediction file already written and only judges. Arguments that decide the query set must match
+    the later `run()`, since predictions are stored per query set.
+
+    Returns:
+        The path of mteb's prediction file.
+    """
+    import mteb
+
+    out = Path(output_folder)
+    corp = corpus_mod.load(corpus)
+    description, _ = resolve_description(task_description, corp)
+    logger.info("criterion: %s", description or "plain relevance")
+    gen = QueryGenerator(
+        generator, task_description=description, n_queries=n_queries, seed=seed, filter=filter_queries, workers=workers
+    )
+    qset = resolve_queries(corp, out, queries, generator, gen, n_queries, seed, generator is not None)
+    revision = mteb.get_model_meta(model).revision
+    folder = out / "predictions" / f"{slug(model)}@{revision}" / qset.id
+    return retrieval.predict(model, task_mod.build(corp, qset.queries), folder, batch_size=batch_size)
+
+
 def run(
     corpus: str | Path,
     models: list[str],
@@ -199,25 +272,8 @@ def run(
         gen_client, task_description=description, n_queries=n_queries, seed=seed, filter=filter_queries, workers=workers
     )
 
-    if queries == "synthetic":
-        if generator is None:
-            logger.warning("no generator given: the judge also writes the queries (self-preference risk)")
-        query_set = f"{slug(corp.id)}-{slug(_model_id(gen_client))}-{_sha(sorted(gen.params.items()))}"
-        qs, n_generated = _cached_queries(out / "queries" / f"{query_set}.json", gen, corp.docs)
-        texts, arm = {q.qid: q.text for q in qs}, "synthetic"
-        generator_settings = gen.settings or llm_settings(gen_client)  # cached queries: only the client is known
-    elif queries == "original":
-        if not corp.queries:
-            raise ValueError(f"{corp.name} has no queries of its own")
-        texts = sample_queries(corp.queries, n_queries, seed)
-        qs, n_generated, arm = None, None, "original"
-        generator_settings = None
-        query_set = f"{slug(corp.id)}-original-n{len(texts)}-s{seed}"
-    else:
-        qs, n_generated = own_queries(queries), None
-        texts, arm = {q.qid: q.text for q in qs}, "own"
-        generator_settings = None
-        query_set = f"{slug(corp.id)}-own-{_sha(*(f'{k}:{v}' for k, v in texts.items()))}"
+    qset = resolve_queries(corp, out, queries, gen_client, gen, n_queries, seed, generator is not None)
+    query_set, texts, qs, arm = qset.id, qset.texts, qset.queries, qset.arm
 
     import mteb
 
@@ -256,7 +312,7 @@ def run(
         "task_description": description,
         "task_description_source": description_source,
         "judge_system": jd.system,
-        "n_queries_generated": n_generated,
+        "n_queries_generated": qset.n_generated,
         "n_queries": len(texts),
         "top_k": top_k,
         "doc_chars": doc_chars,
@@ -270,7 +326,7 @@ def run(
     path = results.record_path(out, corp.name, experiment)
     if path.exists():  # same configuration, same verdicts: the record stands, agreement included
         return Result.from_disk(path)
-    llms = {"judge": llm_settings(judge), "generator": generator_settings}
+    llms = {"judge": llm_settings(judge), "generator": qset.generator_settings}
     label_source = "dataset" if arm == "original" else "seed_documents" if labels else None
     result = Result(
         results.build_record(

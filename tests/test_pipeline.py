@@ -440,6 +440,37 @@ def test_end_to_end_local_corpus():
         assert len(df) == 4 and set(df["arm"]) == {"synthetic", "own"}
 
 
+def test_predict_then_run_reuses_the_predictions():
+    """One model per call, as a roster is run one model per process; the later run finds the
+    prediction files already written and only judges."""
+    pytest.importorskip("mteb")
+    pytest.importorskip("bm25s")
+    pytest.importorskip("sentence_transformers")
+    from mteb_gym import predict, run
+
+    models = ["mteb/baseline-bm25s", "sentence-transformers/all-MiniLM-L6-v2"]
+    with tempfile.TemporaryDirectory() as tmp:
+        docs = Path(tmp) / "docs"
+        docs.mkdir()
+        for did, text in make_corpus(12).items():
+            (docs / f"{did}.txt").write_text(text)
+        shared = dict(n_queries=4, filter_queries=False, output_folder=Path(tmp) / "out", workers=1)
+        paths = [predict(docs, m, generator=MockLLM(), **shared) for m in models]
+        assert all(p.exists() for p in paths)
+
+        calls = {"n": 0}
+
+        class Counting(MockLLM):
+            def chat(self, messages, temperature=0.0, **kw):
+                calls["n"] += 1
+                return super().chat(messages, temperature, **kw)
+
+        res = run(docs, models, judge=Counting(), generator=MockLLM(), **shared)
+        assert len(res.record["ratings"]) == 2 and calls["n"] > 0  # judged
+        found = set((Path(tmp) / "out" / "predictions").rglob("*_predictions.json"))
+        assert found == set(paths)  # the run wrote no new prediction files
+
+
 def test_end_to_end_mteb_task():
     pytest.importorskip("mteb")
     pytest.importorskip("bm25s")

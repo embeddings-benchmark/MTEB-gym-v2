@@ -234,7 +234,6 @@ def run(
             ndcg[m] = retrieval.ndcg_at_10(pred, labels, corp.ignore_identical_ids)
 
     jd = Judge(judge, instruction=description, workers=workers, doc_chars=doc_chars)
-    jd = Judge(judge, instruction=description, workers=workers)
     pairs = list(itertools.combinations(models, 2))
     chosen = pair_subset(len(pairs), list(texts), pairs_per_query, seed)  # None: every pair for every query
     verdicts: list[Verdict] = []

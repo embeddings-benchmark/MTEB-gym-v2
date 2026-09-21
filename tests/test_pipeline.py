@@ -14,7 +14,7 @@ from mteb_gym.llm import MockLLM
 from mteb_gym.queries import Query, QueryGenerator, extract_json
 from mteb_gym.rank import format_leaderboard, rate
 from mteb_gym.retrieval import Ranked
-from mteb_gym.run import judge_pair_cached, resolve_description, verdict_key
+from mteb_gym.run import judge_pair_cached, pair_subset, resolve_description, verdict_key
 
 
 def make_corpus(n=40):
@@ -236,6 +236,16 @@ def test_verdict_cache():
             verdict_key(judge, 5, "qs", "m_a", "r1", "m_b", "r2"),
         )
         assert calls["n"] == 12 and len(list(vdir.glob("*.json"))) == 2
+        # a run over a subset of queries, then the full run: each query is judged once in total
+        key3 = verdict_key(judge, 5, "qs3", "m_a", "r1", "m_b", "r1")
+        calls["n"] = 0
+        part = judge_pair_cached(vdir, judge, "m_a", "m_b", ra[:2], rb[:2], key3)
+        assert [v.qid for v in part] == ["q0", "q1"] and calls["n"] == 4
+        whole = judge_pair_cached(vdir, judge, "m_a", "m_b", ra, rb, key3)
+        assert [v.qid for v in whole] == [q.qid for q in queries] and calls["n"] == 12
+    chosen = pair_subset(10, ["q0", "q1", "q2"], 3, seed=0)
+    assert all(len(s) == 3 for s in chosen.values()) and chosen == pair_subset(10, ["q0", "q1", "q2"], 3, seed=0)
+    assert pair_subset(10, ["q0"], None, 0) is None and pair_subset(3, ["q0"], 5, 0) is None
 
 
 def test_record():

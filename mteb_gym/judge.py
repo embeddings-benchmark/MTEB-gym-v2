@@ -26,11 +26,17 @@ _BODY = (
     "ranking quality. "
 )
 _TAIL = (
-    "Be decisive when one set is clearly better; only answer 'tie' when they are "
-    "genuinely indistinguishable in usefulness. "
-    'Reply with strict JSON: {"winner": "A"|"B"|"tie", '
-    '"confidence": "low"|"medium"|"high", "reasoning": "one sentence"}'
+    'Answer "tie" when the two sets are equally useful. '
+    "Reply with strict JSON, reasoning first: "
+    '{"reasoning": "one sentence", "winner": "A"|"B"|"tie"}'
 )
+_WINNERS = ("A", "B", "tie")
+_VERDICT_SCHEMA = {  # field order is generation order: the judge reasons before it commits
+    "type": "object",
+    "properties": {"reasoning": {"type": "string"}, "winner": {"type": "string", "enum": list(_WINNERS)}},
+    "required": ["reasoning", "winner"],
+    "additionalProperties": False,
+}
 
 
 def task_prompt(prompt) -> str | None:
@@ -77,7 +83,7 @@ def _parse(raw: str) -> tuple[str, str, bool]:
     """(winner, reasoning, parsed_ok). An unparseable answer scores as a tie but is flagged."""
     out = extract_json(raw)
     winner = out.get("winner")
-    ok = winner in ("A", "B", "tie")
+    ok = winner in _WINNERS
     return (winner if ok else "tie"), out.get("reasoning", ""), ok
 
 
@@ -102,7 +108,7 @@ class Judge:
                 f"System B results:\n{_format(second, self.doc_chars)}\n\nReply as JSON.",
             },
         ]
-        return _parse(self.client.chat(msg, temperature=0.0))
+        return _parse(self.client.chat(msg, temperature=0.0, schema=_VERDICT_SCHEMA))
 
     def judge_pair(self, ra: Ranked, rb: Ranked, model_a: str, model_b: str) -> Verdict:
         """Both presentation orders, averaged to a fractional score for A. Identical

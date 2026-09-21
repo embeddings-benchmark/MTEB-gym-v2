@@ -45,7 +45,7 @@ def test_query_generation():
 
     # worker count must never change the query set, including under flaky calls
     class Flaky(MockLLM):
-        def chat(self, messages, temperature=0.0):
+        def chat(self, messages, temperature=0.0, **kw):
             prompt = " ".join(m.get("content", "") for m in messages)
             return "no json here" if self._hash(prompt) % 3 == 0 else super().chat(messages, temperature)
 
@@ -114,14 +114,14 @@ def test_judge():
     assert [(v.qid, v.score_a) for v in par] == [(v.qid, v.score_a) for v in seq]
 
     class Exploding:
-        def chat(self, messages, temperature=0.0):
+        def chat(self, messages, temperature=0.0, **kw):
             raise AssertionError("judge must not be called for identical result sets")
 
     v = Judge(Exploding()).judge_all(ra[:1], fake_ranked("a", queries[:1]), "m_a", "m_b")[0]
     assert v.score_a == 0.5 and v.raw == ["identical"]
 
     class Garbage:
-        def chat(self, messages, temperature=0.0):
+        def chat(self, messages, temperature=0.0, **kw):
             return "I refuse to answer in the requested format."
 
     verdicts = Judge(Garbage()).judge_all(ra[:5], rb[:5], "m_a", "m_b")
@@ -200,9 +200,9 @@ def test_verdict_cache():
     calls = {"n": 0}
 
     class Counting(MockLLM):
-        def chat(self, messages, temperature=0.0):
+        def chat(self, messages, temperature=0.0, **kw):
             calls["n"] += 1
-            return super().chat(messages, temperature)
+            return super().chat(messages, temperature, **kw)
 
     queries = [Query(f"q{i}", f"query {i}", ["D0"]) for i in range(6)]
     ra, rb = fake_ranked("a", queries), fake_ranked("b", queries)
@@ -354,9 +354,9 @@ def test_end_to_end_local_corpus():
     calls = {"n": 0}
 
     class Counting(MockLLM):
-        def chat(self, messages, temperature=0.0):
+        def chat(self, messages, temperature=0.0, **kw):
             calls["n"] += 1
-            return super().chat(messages, temperature)
+            return super().chat(messages, temperature, **kw)
 
     with tempfile.TemporaryDirectory() as tmp:
         docs = Path(tmp) / "docs"

@@ -124,6 +124,13 @@ def test_original_queries_are_sampled_and_self_matches_dropped():
         assert top_k(path, flagged, {"d0": "the query itself"}, 2)[0].doc_ids == ["d1", "d2"]
 
 
+def test_doc_chars_reaches_the_judge():
+    from mteb_gym.judge import Judge
+
+    assert Judge(MockLLM(), doc_chars=300).doc_chars == 300
+    assert "x" * 301 not in Judge(MockLLM(), doc_chars=300).system  # the setting is the judge's, not the prompt's
+
+
 def test_judge():
     from mteb_gym.judge import _format
 

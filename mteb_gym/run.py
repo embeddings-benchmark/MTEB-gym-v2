@@ -34,12 +34,16 @@ from .retrieval import Ranked, slug
 logger = logging.getLogger(__name__)
 
 
-def _model_id(client) -> str:
-    return str(getattr(client, "model", type(client).__name__))
-
-
 def _sha(*parts) -> str:
     return hashlib.sha256("|".join(map(str, parts)).encode()).hexdigest()[:12]
+
+
+def _model_id(client) -> str:
+    """The judge or generator as its answers depend on it: the model, and the knobs it was built
+    with. An output cap truncates, and extra_body carries server settings such as thinking mode."""
+    name = str(getattr(client, "model", type(client).__name__))
+    knobs = (getattr(client, "max_tokens", None), getattr(client, "extra_body", None))
+    return name if knobs == (None, None) else f"{name}+{_sha(*map(repr, knobs))}"
 
 
 def resolve_description(task_description: str | None, corpus) -> tuple[str | None, str | None]:
@@ -91,8 +95,8 @@ def own_queries(spec) -> list[Query]:
 
 
 def verdict_key(judge: Judge, top_k: int, query_set: str, a: str, rev_a: str | None, b: str, rev_b: str | None) -> str:
-    """Identity of a pair's verdicts: judge, resolved prompt, what it is shown (top_k documents of
-    doc_chars each), query set, both models at their revisions."""
+    """Identity of a pair's verdicts: the judge and its settings, the resolved prompt, what it is
+    shown (top_k documents of doc_chars each), the query set, both models at their revisions."""
     return _sha(
         _model_id(judge.client), judge.system, top_k, judge.doc_chars, query_set, f"{a}@{rev_a}", f"{b}@{rev_b}"
     )

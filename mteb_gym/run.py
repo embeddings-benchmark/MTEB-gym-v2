@@ -156,16 +156,12 @@ class QuerySet(NamedTuple):
     generator_settings: dict | None
 
 
-def resolve_queries(
-    corp, out: Path, queries, gen_client, gen, n_queries: int, seed: int, has_generator: bool
-) -> QuerySet:
+def resolve_queries(corp, out: Path, queries, gen: QueryGenerator, n_queries: int, seed: int) -> QuerySet:
     """Generate the queries, take the dataset's own, or read the ones you supplied."""
     if queries == "synthetic":
-        if not has_generator:
-            logger.warning("no generator given: the judge also writes the queries (self-preference risk)")
-        qid = f"{slug(corp.id)}-{slug(_model_id(gen_client))}-{_sha(sorted(gen.params.items()))}"
+        qid = f"{slug(corp.id)}-{slug(_model_id(gen.client))}-{_sha(sorted(gen.params.items()))}"
         qs, n_generated = _cached_queries(out / "queries" / f"{qid}.json", gen, corp.docs)
-        settings = gen.settings or llm_settings(gen_client)  # cached queries: only the client is known
+        settings = gen.settings or llm_settings(gen.client)  # cached queries: only the client is known
         return QuerySet(qid, {q.qid: q.text for q in qs}, qs, "synthetic", n_generated, settings)
     if queries == "original":
         if not corp.queries:
@@ -204,6 +200,11 @@ def predict(
     """
     import mteb
 
+    if queries == "synthetic" and generator is None:
+        raise ValueError(
+            "predict() needs the generator that run() will use: a generated query set is identified by it, "
+            "and predictions are stored per query set. Pass generator=, or queries='original' / your own."
+        )
     out = Path(output_folder)
     corp = corpus_mod.load(corpus)
     description, _ = resolve_description(task_description, corp)
@@ -211,7 +212,8 @@ def predict(
     gen = QueryGenerator(
         generator, task_description=description, n_queries=n_queries, seed=seed, filter=filter_queries, workers=workers
     )
-    qset = resolve_queries(corp, out, queries, generator, gen, n_queries, seed, generator is not None)
+    qset = resolve_queries(corp, out, queries, gen, n_queries, seed)
+    logger.info("query set: %s", qset.id)
     revision = mteb.get_model_meta(model).revision
     folder = out / "predictions" / f"{slug(model)}@{revision}" / qset.id
     return retrieval.predict(model, task_mod.build(corp, qset.queries), folder, batch_size=batch_size)
@@ -264,6 +266,8 @@ def run(
     if not models:
         raise ValueError("no models given")
     gen_client = generator if generator is not None else judge
+    if generator is None and queries == "synthetic":
+        logger.warning("no generator given: the judge also writes the queries (self-preference risk)")
 
     corp = corpus_mod.load(corpus)
     description, description_source = resolve_description(task_description, corp)
@@ -272,7 +276,8 @@ def run(
         gen_client, task_description=description, n_queries=n_queries, seed=seed, filter=filter_queries, workers=workers
     )
 
-    qset = resolve_queries(corp, out, queries, gen_client, gen, n_queries, seed, generator is not None)
+    qset = resolve_queries(corp, out, queries, gen, n_queries, seed)
+    logger.info("query set: %s", qset.id)
     query_set, texts, qs, arm = qset.id, qset.texts, qset.queries, qset.arm
 
     import mteb

@@ -455,6 +455,8 @@ def test_predict_then_run_reuses_the_predictions():
         for did, text in make_corpus(12).items():
             (docs / f"{did}.txt").write_text(text)
         shared = dict(n_queries=4, filter_queries=False, output_folder=Path(tmp) / "out", workers=1)
+        with pytest.raises(ValueError, match="generator"):
+            predict(docs, models[0], **shared)  # a generated query set is identified by the generator
         paths = [predict(docs, m, generator=MockLLM(), **shared) for m in models]
         assert all(p.exists() for p in paths)
 

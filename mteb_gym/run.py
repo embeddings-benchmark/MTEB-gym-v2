@@ -69,6 +69,15 @@ def _cached_queries(path: Path, gen: QueryGenerator, docs: dict[str, str]) -> tu
     return queries, gen.n_generated
 
 
+def sample_queries(queries: dict[str, str], n: int, seed: int) -> dict[str, str]:
+    """`n` of the dataset's own queries, drawn once with `seed`, in the dataset's order.
+    All of them when it has no more than `n`."""
+    if len(queries) <= n:
+        return queries
+    keep = set(random.Random(seed).sample(sorted(queries), n))
+    return {qid: text for qid, text in queries.items() if qid in keep}
+
+
 def own_queries(spec) -> list[Query]:
     """Your own queries: a list of strings, a .txt (one per line) or a .jsonl with id/text."""
     if isinstance(spec, (list, tuple)):
@@ -196,9 +205,10 @@ def run(
     elif queries == "original":
         if not corp.queries:
             raise ValueError(f"{corp.name} has no queries of its own")
-        qs, n_generated, texts, arm = None, None, corp.queries, "original"
+        texts = sample_queries(corp.queries, n_queries, seed)
+        qs, n_generated, arm = None, None, "original"
         generator_settings = None
-        query_set = f"{slug(corp.id)}-original"
+        query_set = f"{slug(corp.id)}-original-n{len(texts)}-s{seed}"
     else:
         qs, n_generated = own_queries(queries), None
         texts, arm = {q.qid: q.text for q in qs}, "own"

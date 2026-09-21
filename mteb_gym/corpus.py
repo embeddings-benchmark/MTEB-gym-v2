@@ -25,6 +25,7 @@ class Corpus:
     metadata: object  # mteb TaskMetadata
     queries: dict[str, str] | None = None  # the task's own queries (human-query arm)
     qrels: dict[str, dict[str, int]] | None = None  # the task's own relevance labels
+    ignore_identical_ids: bool = False  # mteb's flag: a query that is itself a document, as in ArguAna
 
     @property
     def source(self) -> str:
@@ -65,6 +66,7 @@ def _load_task(name: str) -> Corpus:
         metadata=metadata,
         queries=queries,
         qrels=data.get("relevant_docs"),
+        ignore_identical_ids=task.ignore_identical_ids,
     )
 
 

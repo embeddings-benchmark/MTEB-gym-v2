@@ -245,6 +245,10 @@ def test_verdict_cache():
         assert [v.qid for v in resumed] == [q.qid for q in queries] and calls["n"] == 8, (
             "resume judges only the 4 missing"
         )
+        # the judge's own settings are part of its identity: thinking mode changes the verdicts
+        from mteb_gym.run import _model_id
+
+        assert _model_id(MockLLM()) != _model_id(types.SimpleNamespace(model="mock", extra_body={"think": True}))
         # a new revision of one model is a new key: no reuse
         assert verdict_key(judge, 5, "qs", "m_a", "r1", "m_b", "r2") != key
         assert verdict_key(Judge(Counting(seed=1), doc_chars=300), 5, "qs", "m_a", "r1", "m_b", "r1") != key

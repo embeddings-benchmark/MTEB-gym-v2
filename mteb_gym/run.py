@@ -219,10 +219,15 @@ def run(
 
     revisions = {m: mteb.get_model_meta(m).revision for m in models}  # mteb's pins: part of every cache identity
     gym_task = task_mod.build(corp, qs)
+    labels = task_mod.labels(corp, qs)  # None for your own queries
     ranked: dict[str, list[Ranked]] = {}
+    ndcg: dict[str, float] = {}  # the baseline that needs no judge: nDCG@10 against the labels
     for m in models:
         folder = out / "predictions" / f"{slug(m)}@{revisions[m]}" / query_set
-        ranked[m] = retrieval.top_k(retrieval.predict(m, gym_task, folder, batch_size=batch_size), corp, texts, top_k)
+        pred = retrieval.predict(m, gym_task, folder, batch_size=batch_size)
+        ranked[m] = retrieval.top_k(pred, corp, texts, top_k)
+        if labels:
+            ndcg[m] = retrieval.ndcg_at_10(pred, labels, corp.ignore_identical_ids)
 
     jd = Judge(judge, instruction=description, workers=workers, doc_chars=doc_chars)
     jd = Judge(judge, instruction=description, workers=workers)
@@ -263,8 +268,12 @@ def run(
     if path.exists():  # same configuration, same verdicts: the record stands, agreement included
         return Result.from_disk(path)
     llms = {"judge": llm_settings(judge), "generator": generator_settings}
+    label_source = "dataset" if arm == "original" else "seed_documents" if labels else None
     result = Result(
-        results.build_record(corp, experiment, ratings, verdicts, time.time() - started, revisions, llms), path
+        results.build_record(
+            corp, experiment, ratings, verdicts, time.time() - started, revisions, llms, ndcg=ndcg, labels=label_source
+        ),
+        path,
     )
     result.to_disk()
     return result

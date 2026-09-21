@@ -107,7 +107,7 @@ SGLang and `transformers serve` expose the same endpoint. A judge and a generato
 
 `help(gym.run)` documents each one.
 
-Everything is written under `output_folder`. The record holds the ratings, the configuration and the diagnostics:
+Everything is written under `output_folder`. The record holds the ratings, the configuration, the diagnostics, and each model's nDCG@10 against the seed documents or the dataset's labels, a baseline that needs no judge:
 
 ```text
 results/nfcorpus/

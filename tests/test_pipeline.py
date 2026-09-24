@@ -131,6 +131,19 @@ def test_doc_chars_reaches_the_judge():
     assert "x" * 301 not in Judge(MockLLM(), doc_chars=300).system  # the setting is the judge's, not the prompt's
 
 
+def test_failed_answers_are_kept():
+    """A call that fails to parse keeps the end of its answer, so a loop or a cut-off is visible."""
+
+    class Garbled(MockLLM):
+        def chat(self, messages, **kw):
+            return "thinking... " * 100
+
+    q = [Query("q0", "q", ["D0"])]
+    v = Judge(Garbled()).judge_pair(fake_ranked("a", q)[0], fake_ranked("b", q)[0], "m_a", "m_b")
+    assert v.parsed_ok == [False, False] and len(v.unparsed) == 2
+    assert 0 < len(v.unparsed[0]) <= 500 and v.unparsed[0].endswith("thinking... ")
+
+
 def test_judge():
     from mteb_gym.judge import _format
 

@@ -18,6 +18,7 @@ import logging
 import random
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 from typing import NamedTuple
@@ -294,18 +295,25 @@ def run(
         if labels:
             ndcg[m] = retrieval.ndcg_at_10(pred, labels, corp.ignore_identical_ids)
 
-    jd = Judge(judge, instruction=description, workers=workers, doc_chars=doc_chars)
+    # One limit on LLM calls in flight: `workers` pairs at once, each judged one query at a time.
+    # Pairs write separate verdict files, so they are independent.
+    jd = Judge(judge, instruction=description, workers=1, doc_chars=doc_chars)
     pairs = list(itertools.combinations(models, 2))
     chosen = pair_subset(len(pairs), list(texts), pairs_per_query, seed)  # None: every pair for every query
-    verdicts: list[Verdict] = []
-    for i, (a, b) in enumerate(pairs):
-        logger.info("pair %d/%d: %s vs %s", i + 1, len(pairs), a, b)
-        key = verdict_key(jd, top_k, query_set, a, revisions[a], b, revisions[b])
+
+    def judge_pair(i: int) -> list[Verdict]:
+        a, b = pairs[i]
         ra, rb = ranked[a], ranked[b]
         if chosen is not None:
             ra = [r for r in ra if i in chosen[r.qid]]
             rb = [r for r in rb if i in chosen[r.qid]]
-        verdicts.extend(judge_pair_cached(out / "verdicts", jd, a, b, ra, rb, key))
+        key = verdict_key(jd, top_k, query_set, a, revisions[a], b, revisions[b])
+        return judge_pair_cached(out / "verdicts", jd, a, b, ra, rb, key)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        # map keeps pair order, so the verdict list, and the bootstrap over it, is the same every run
+        verdicts = [v for pair in pool.map(judge_pair, range(len(pairs))) for v in pair]
+    logger.info("judged %d pairs", len(pairs))
 
     ratings = rate(verdicts, seed=seed)
     experiment = {

@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ class LLM:
         self.max_tokens = max_tokens  # no cap unless asked: a cap also counts a reasoning model's thinking
         self.extra_body = extra_body  # server knobs, e.g. {"chat_template_kwargs": {"enable_thinking": False}}
         self._rejected: set[str] = set()  # sampling parameters this model refused
+        self._local = threading.local()  # per thread, since pairs are judged concurrently
         self.sent: dict = {}  # parameters actually sent on the last call, for the record
         self.served_model: str | None = None  # the model string the server reported, e.g. a dated snapshot
 
@@ -87,7 +89,12 @@ class LLM:
                 )
                 self.sent = {**sent, **(self.extra_body or {})}
                 self.served_model = getattr(resp, "model", None) or self.served_model
-                return resp.choices[0].message.content or ""
+                message = resp.choices[0].message
+                # servers that separate reasoning return it beside the answer, under one of these names
+                self._local.thinking = getattr(message, "reasoning_content", None) or getattr(
+                    message, "reasoning", None
+                )
+                return message.content or ""
             except Exception as e:  # noqa: BLE001
                 # Some models refuse a parameter and answer 400 naming it: models that always reason take
                 # no temperature, older servers may not know max_completion_tokens. Drop it, remember, and
@@ -109,3 +116,9 @@ def llm_settings(client) -> dict:
         "served_model": getattr(client, "served_model", None),
         **getattr(client, "sent", {}),
     }
+
+
+def thinking_chars(client) -> int:
+    """Length of the reasoning the server returned beside the last answer in this thread; 0 when it
+    returned none, which for a model meant to think means the server is not separating it."""
+    return len(getattr(getattr(client, "_local", None), "thinking", None) or "")

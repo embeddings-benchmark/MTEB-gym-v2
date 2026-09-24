@@ -61,9 +61,10 @@ def verdict_diagnostics(verdicts: list[Any]) -> dict[str, Any]:
     n = len(verdicts)
     identical = sum(v.raw == ["identical"] for v in verdicts)
     ties = sum(float(v.score_a) == 0.5 for v in verdicts)
-    asks = failures = first = decisive = 0
+    asks = failures = first = decisive = thought = 0
     for v in verdicts:
         asks += len(v.parsed_ok)
+        thought += sum(n > 0 for n in getattr(v, "thinking", []))
         failures += sum(not ok for ok in v.parsed_ok)
         for w in v.raw:
             if w in ("A", "B"):
@@ -76,6 +77,7 @@ def verdict_diagnostics(verdicts: list[Any]) -> dict[str, Any]:
         "tie_rate": ties / n if n else None,
         "a_first_rate": first / decisive if decisive else None,
         "parse_failure_rate": failures / asks if asks else None,
+        "thinking_rate": thought / asks if asks else None,  # calls that returned reasoning apart from the answer
         "identical_retrieval_rate": identical / n if n else None,
     }
 

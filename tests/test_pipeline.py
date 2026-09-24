@@ -85,6 +85,18 @@ def test_llm_drops_rejected_params():
     assert llm.chat([{"role": "user", "content": "hi"}]) == "ok"
     assert calls == [["max_completion_tokens", "temperature"], ["max_completion_tokens"], [], []]  # learned once
     assert llm.served_model == "m-2026-01-01" and llm.sent == {}  # both refused: the record shows neither
+    from mteb_gym.llm import thinking_chars
+
+    assert thinking_chars(llm) == 0  # the stub returned no reasoning apart from the answer
+    reply = types.SimpleNamespace(content="ok", reasoning_content="first compare the two lists")
+    llm.client = types.SimpleNamespace(
+        chat=types.SimpleNamespace(
+            completions=types.SimpleNamespace(
+                create=lambda **kw: types.SimpleNamespace(model="m", choices=[types.SimpleNamespace(message=reply)])
+            )
+        )
+    )
+    assert llm.chat([{"role": "user", "content": "hi"}]) == "ok" and thinking_chars(llm) == 27
 
 
 def test_description_is_what_the_encoders_get():
@@ -297,6 +309,7 @@ def test_record():
         "tie_rate": 2 / 3,
         "a_first_rate": 0.5,
         "parse_failure_rate": 0.25,
+        "thinking_rate": 0.0,
         "identical_retrieval_rate": 1 / 3,
     }
     corpus = types.SimpleNamespace(

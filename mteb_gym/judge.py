@@ -13,6 +13,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
+from .llm import thinking_chars
 from .queries import extract_json
 from .retrieval import Ranked
 
@@ -64,6 +65,7 @@ class Verdict:
     raw: list[str] = field(default_factory=list)  # per-order winners, for audit
     reasoning: str = ""
     parsed_ok: list[bool] = field(default_factory=list)  # per order; empty = no judge call
+    thinking: list[int] = field(default_factory=list)  # per order: characters of reasoning returned apart
 
 
 def _cut(text: str, n: int) -> str:
@@ -99,7 +101,7 @@ class Judge:
         self.workers = max(1, workers)
         self.doc_chars = doc_chars  # characters of each document shown to the judge
 
-    def _ask(self, query: str, first: Ranked, second: Ranked) -> tuple[str, str, bool]:
+    def _ask(self, query: str, first: Ranked, second: Ranked) -> tuple[str, str, bool, int]:
         msg = [
             {"role": "system", "content": self.system},
             {
@@ -108,7 +110,8 @@ class Judge:
                 f"System B results:\n{_format(second, self.doc_chars)}\n\nReply as JSON.",
             },
         ]
-        return _parse(self.client.chat(msg, temperature=0.0, schema=_VERDICT_SCHEMA))
+        winner, reasoning, ok = _parse(self.client.chat(msg, temperature=0.0, schema=_VERDICT_SCHEMA))
+        return winner, reasoning, ok, thinking_chars(self.client)
 
     def judge_pair(self, ra: Ranked, rb: Ranked, model_a: str, model_b: str) -> Verdict:
         """Both presentation orders, averaged to a fractional score for A. Identical
@@ -123,8 +126,8 @@ class Judge:
                 raw=["identical"],
                 reasoning="identical result sets; tied without judging",
             )
-        w1, why1, ok1 = self._ask(ra.query, ra, rb)
-        w2, why2, ok2 = self._ask(ra.query, rb, ra)
+        w1, why1, ok1, think1 = self._ask(ra.query, ra, rb)
+        w2, why2, ok2, think2 = self._ask(ra.query, rb, ra)
         score = (_OUTCOME[w1] + 1.0 - _OUTCOME[w2]) / 2
         return Verdict(
             ra.qid,
@@ -135,6 +138,7 @@ class Judge:
             raw=[w1, w2],
             reasoning=" | ".join(w for w in (why1, why2) if w),
             parsed_ok=[ok1, ok2],
+            thinking=[think1, think2],
         )
 
     def _early_failure_guard(self, n_done: int, n_failed: int, n_identical: int) -> None:

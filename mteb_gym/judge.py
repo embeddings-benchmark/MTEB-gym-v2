@@ -64,6 +64,7 @@ class Verdict:
     raw: list[str] = field(default_factory=list)  # per-order winners, for audit
     reasoning: str = ""
     parsed_ok: list[bool] = field(default_factory=list)  # per order; empty = no judge call
+    unparsed: list[str] = field(default_factory=list)  # the end of each answer that failed to parse
 
 
 def _cut(text: str, n: int) -> str:
@@ -77,6 +78,9 @@ def _cut(text: str, n: int) -> str:
 def _format(r: Ranked, doc_chars: int) -> str:
     """The list as the judge sees it: each document cut to `doc_chars`."""
     return "\n".join(f"  {i + 1}. {_cut(t, doc_chars)}" for i, t in enumerate(r.doc_texts))
+
+
+_KEEP = 500  # characters kept from an answer that failed to parse: enough to see a loop or a cut-off
 
 
 def _parse(raw: str) -> tuple[str, str, bool]:
@@ -99,7 +103,7 @@ class Judge:
         self.workers = max(1, workers)
         self.doc_chars = doc_chars  # characters of each document shown to the judge
 
-    def _ask(self, query: str, first: Ranked, second: Ranked) -> tuple[str, str, bool]:
+    def _ask(self, query: str, first: Ranked, second: Ranked) -> tuple[str, str, bool, str]:
         msg = [
             {"role": "system", "content": self.system},
             {
@@ -108,7 +112,9 @@ class Judge:
                 f"System B results:\n{_format(second, self.doc_chars)}\n\nReply as JSON.",
             },
         ]
-        return _parse(self.client.chat(msg, temperature=0.0, schema=_VERDICT_SCHEMA))
+        answer = self.client.chat(msg, temperature=0.0, schema=_VERDICT_SCHEMA)
+        winner, reasoning, ok = _parse(answer)
+        return winner, reasoning, ok, "" if ok else answer[-_KEEP:]
 
     def judge_pair(self, ra: Ranked, rb: Ranked, model_a: str, model_b: str) -> Verdict:
         """Both presentation orders, averaged to a fractional score for A. Identical
@@ -123,8 +129,8 @@ class Judge:
                 raw=["identical"],
                 reasoning="identical result sets; tied without judging",
             )
-        w1, why1, ok1 = self._ask(ra.query, ra, rb)
-        w2, why2, ok2 = self._ask(ra.query, rb, ra)
+        w1, why1, ok1, bad1 = self._ask(ra.query, ra, rb)
+        w2, why2, ok2, bad2 = self._ask(ra.query, rb, ra)
         score = (_OUTCOME[w1] + 1.0 - _OUTCOME[w2]) / 2
         return Verdict(
             ra.qid,
@@ -135,6 +141,7 @@ class Judge:
             raw=[w1, w2],
             reasoning=" | ".join(w for w in (why1, why2) if w),
             parsed_ok=[ok1, ok2],
+            unparsed=[bad for bad in (bad1, bad2) if bad],
         )
 
     def _early_failure_guard(self, n_done: int, n_failed: int, n_identical: int) -> None:

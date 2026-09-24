@@ -42,10 +42,10 @@ def _sha(*parts) -> str:
 
 def _model_id(client) -> str:
     """The judge or generator as its answers depend on it: the model, and the knobs it was built
-    with. An output cap truncates, and extra_body carries server settings such as thinking mode."""
+    with. A temperature, an output cap, and extra_body server settings such as thinking mode."""
     name = str(getattr(client, "model", type(client).__name__))
-    knobs = (getattr(client, "max_tokens", None), getattr(client, "extra_body", None))
-    return name if knobs == (None, None) else f"{name}+{_sha(*map(repr, knobs))}"
+    knobs = tuple(getattr(client, k, None) for k in ("temperature", "max_tokens", "extra_body"))
+    return name if knobs == (None, None, None) else f"{name}+{_sha(*map(repr, knobs))}"
 
 
 def resolve_description(task_description: str | None, corpus) -> tuple[str | None, str | None]:

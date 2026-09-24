@@ -4,13 +4,16 @@ mteb-gym predict --corpus NFCorpus --model BAAI/bge-base-en-v1.5 --generator gpt
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 
 from . import LLM, MockLLM, predict, run
 
 
-def client(model: str, base_url: str | None):
-    return MockLLM() if model == "mock" else LLM(model, base_url=base_url)
+def client(model: str, base_url: str | None, extra_body: str | None = None):
+    if model == "mock":
+        return MockLLM()
+    return LLM(model, base_url=base_url, extra_body=json.loads(extra_body) if extra_body else None)
 
 
 def _corpus_and_queries(ap: argparse.ArgumentParser) -> None:
@@ -18,6 +21,7 @@ def _corpus_and_queries(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--corpus", required=True, help="mteb retrieval task name, or a directory / .jsonl of documents")
     ap.add_argument("--generator", default=None, help="query generator model id (default: the judge)")
     ap.add_argument("--generator-url", default=None)
+    ap.add_argument("--generator-extra-body", default=None, help="JSON passed to the generator's server")
     ap.add_argument(
         "--queries",
         default="synthetic",
@@ -47,6 +51,11 @@ def main(argv=None) -> None:
         "--judge", required=True, help="judge model id on an OpenAI-compatible endpoint ('mock' for a dry run)"
     )
     run_ap.add_argument("--judge-url", default=None, help="base url for the judge endpoint")
+    run_ap.add_argument(
+        "--judge-extra-body",
+        default=None,
+        help='JSON passed to the judge\'s server, e.g. \'{"chat_template_kwargs": {"enable_thinking": false}}\'',
+    )
     run_ap.add_argument("--top-k", type=int, default=10)
     run_ap.add_argument("--doc-chars", type=int, default=2000, help="characters of each document shown to the judge")
     run_ap.add_argument(
@@ -60,7 +69,7 @@ def main(argv=None) -> None:
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
     shared = dict(
-        generator=client(args.generator, args.generator_url) if args.generator else None,
+        generator=client(args.generator, args.generator_url, args.generator_extra_body) if args.generator else None,
         queries=args.queries,
         task_description=args.task_description,
         n_queries=args.n_queries,
@@ -78,7 +87,7 @@ def main(argv=None) -> None:
     result = run(
         args.corpus,
         args.models,
-        client(args.judge, args.judge_url),
+        client(args.judge, args.judge_url, args.judge_extra_body),
         top_k=args.top_k,
         doc_chars=args.doc_chars,
         pairs_per_query=args.pairs_per_query,
